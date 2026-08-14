@@ -25,6 +25,7 @@ One dependency: `yara-python`. No database, no services. State is files.
 |---|---|
 | `sync` | shortcut for `mirror sync` |
 | `mirror sync` | fetch rules, compile, run the gate |
+| `mirror gate` | re-run the gate on the mirror on disk, no fetch |
 | `mirror check` | re-scan the baseline, report only, move nothing |
 | `mirror recheck` | put quarantined rules back on trial |
 | `mirror compile` | recompile the mirror |

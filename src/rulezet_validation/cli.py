@@ -24,6 +24,7 @@ from . import mirror as mirror_mod
 from .gate import (
     Counter,
     baseline_files,
+    gate,
     read_released,
     recheck,
     scan_baseline,
@@ -57,6 +58,24 @@ def cmd_mirror_compile(args):
     settings, paths = _resolved(args)
     rules = mirror_mod.compile_mirror(paths, validate=not args.no_validate)
     return 0 if rules is not None else 1
+
+
+def cmd_mirror_gate(args):
+    """Re-run the gate on the mirror already on disk. No fetch.
+
+    A sync with nothing new to fetch stops before the gate, so a change on
+    *this* side of the wire -- a new baseline binary, an edited exclude list, a
+    new field in the quarantine record -- has no way to reach the verdicts
+    without a full crawl. This is that way.
+    """
+    settings, paths = _resolved(args)
+    rules = mirror_mod.load_compiled(paths)
+    if rules is None:
+        print("no compiled mirror; run `rulezet-validate mirror sync` first")
+        return 1
+    if gate(rules, paths, settings):
+        mirror_mod.compile_mirror(paths, validate=False)
+    return 0
 
 
 def cmd_mirror_check(args):
@@ -187,6 +206,9 @@ def build_parser():
     c = msub.add_parser("compile", help="recompile the mirror")
     c.add_argument("--no-validate", action="store_true")
     c.set_defaults(func=cmd_mirror_compile)
+
+    g = msub.add_parser("gate", help="re-run the gate on the mirror on disk")
+    g.set_defaults(func=cmd_mirror_gate)
 
     k = msub.add_parser("check", help="re-scan the baseline, report only")
     k.set_defaults(func=cmd_mirror_check)
