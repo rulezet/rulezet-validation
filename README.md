@@ -36,10 +36,21 @@ One dependency (`yara-python`). No database, no services. State is files.
 ## Quickstart
 
 ```sh
-rulezet-validate mirror sync --limit 500    # trial run, no API key needed
+rulezet-validate sync --limit 500          # trial run, no API key needed
 rulezet-validate mirror status
 rulezet-validate scan ./suspicious.elf
 ```
+
+`sync` is a shortcut for `mirror sync`; every other mirror command lives under
+`mirror`.
+
+Rules are mirrored byte-for-byte and never rewritten. Some of them call YARA's
+`console` module, which prints straight to stdout from the C library — and
+because `console.log()` returns true, it is chained into conditions with `and`,
+so it fires while the condition is *evaluated*, not only when it matches. Across
+a 300-file baseline that buries the result under lines like `The SHA256 Hash :
+e0d411...`. Those are captured and reduced to a count. The rules themselves are
+untouched; only where their output goes changes.
 
 Every request this tool makes is a read; nothing is written back to
 rulezet.org.

@@ -37,6 +37,32 @@ from pathlib import Path
 PROBES = Path(__file__).resolve().parent / "baseline" / "probes"
 
 
+class Counter:
+    """Swallows output from YARA's `console` module, counting it.
+
+    A rule may call `console.log()`, which writes straight to stdout from the C
+    library. Eleven rules in the mirror do, and because `console.log()` returns
+    true they are chained into conditions with `and` -- so they print while the
+    condition is being *evaluated*, not only when it matches. Across a 300-file
+    baseline that buries the actual result in lines like
+
+        The SHA256 Hash : e0d411325b7035b8ea6e9cdb4c3edf523e7a12fd4c7e450...
+
+    A ruleset does not get to own this tool's stdout, so the output is captured
+    and reduced to a count. Passing any callback is what stops yara printing.
+    """
+
+    def __init__(self):
+        self.n = 0
+
+    def hit(self, message):
+        self.n += 1
+
+    def report(self, log):
+        if self.n:
+            log(f"  {self.n} console messages from rules suppressed")
+
+
 def rule_digest(path):
     """Hash of a rule file, so a verdict can name the bytes it was about."""
     try:
@@ -110,9 +136,10 @@ def scan_baseline(rules, files, log=print):
     the same way.
     """
     hits = {}
+    noise = Counter()
     for f in files:
         try:
-            matches = rules.match(str(f), timeout=300)
+            matches = rules.match(str(f), timeout=300, console_callback=noise.hit)
         except Exception:
             # A single unreadable or pathological file is not a reason to lose
             # the rest of the run.
@@ -123,6 +150,7 @@ def scan_baseline(rules, files, log=print):
             if len(e["where"]) < 3:
                 e["where"].append(f.name)
     log(f"  {len(files)} clean binaries scanned, {len(hits)} rules fired")
+    noise.report(log)
     return hits
 
 

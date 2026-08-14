@@ -203,3 +203,28 @@ def test_a_cleared_rule_is_marked_not_erased(tmp_path):
     assert entry["status"] == "cleared"
     assert entry["first_seen"]
     assert "noisy-uuid\tnoisy" in p["quarantine_log"].read_text()
+
+
+CONSOLE_RULE = """
+import "console"
+rule chatty {
+    condition:
+        console.log("The Magic Header : ", uint16(0)) and uint16(0) == 0x457f
+}
+"""
+
+
+def test_rules_do_not_get_to_write_to_our_stdout(tmp_path, capsys):
+    """`console.log()` prints straight from the C library, and because it
+    returns true it is chained with `and` -- so it fires while the condition is
+    being evaluated, not only on a match. Across a real baseline that buries
+    the result."""
+    s, p = _setup(tmp_path)
+    (tmp_path / "clean" / "elfish.bin").write_bytes(b"\x7fELF padding\n")
+    (p["rules"] / "chatty-uuid.yara").write_text(CONSOLE_RULE)
+
+    logged = []
+    gate.scan_baseline(_compiled(p), gate.baseline_files(s), log=logged.append)
+
+    assert "The Magic Header" not in capsys.readouterr().out
+    assert any("console messages from rules suppressed" in line for line in logged)

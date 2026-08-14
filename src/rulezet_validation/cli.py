@@ -3,6 +3,7 @@
 Wiring only -- every command is a few lines that resolve config and call into a
 module. Logic lives in `source`, `mirror`, `gate`, `sync`.
 
+    rulezet-validate sync                   # shortcut for `mirror sync`
     rulezet-validate mirror sync            # fetch, tag, compile, gate
     rulezet-validate mirror check           # re-scan the baseline, move nothing
     rulezet-validate mirror compile
@@ -20,7 +21,14 @@ import sys
 
 from . import config
 from . import mirror as mirror_mod
-from .gate import baseline_files, read_released, recheck, scan_baseline, stale
+from .gate import (
+    Counter,
+    baseline_files,
+    read_released,
+    recheck,
+    scan_baseline,
+    stale,
+)
 from .sync import sync as run_sync
 
 
@@ -106,12 +114,14 @@ def cmd_scan(args):
     if rules is None:
         print("no compiled mirror; run `rulezet-validate mirror sync` first")
         return 1
-    matches = rules.match(args.binary, timeout=300)
+    noise = Counter()
+    matches = rules.match(args.binary, timeout=300, console_callback=noise.hit)
     for m in matches:
         offsets = [
             hex(i.offset) for s in (m.strings or []) for i in (s.instances or [])
         ]
         print(f"{m.rule}\tns={m.namespace}\t{','.join(offsets[:8])}")
+    noise.report(lambda s: print(s, file=sys.stderr))
     return 0
 
 
@@ -124,6 +134,21 @@ def cmd_baseline_list(args):
     return 0
 
 
+def _add_sync(sub, name, help_text):
+    """`sync` exists twice: under `mirror`, and at the top level.
+
+    One canonical place for the flags, registered twice. `mirror sync` is the
+    honest name -- it acts on the mirror -- but it is also the command people
+    run every day, and making the common case the short one is worth an alias.
+    """
+    p = sub.add_parser(name, help=help_text)
+    p.add_argument("--full", action="store_true", help="ignore the last-sync date")
+    p.add_argument("--limit", type=int, help="stop after N rules (trial runs)")
+    p.add_argument("--meta-only", action="store_true", help="metadata backfill")
+    p.set_defaults(func=cmd_mirror_sync)
+    return p
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="rulezet-validate", description=__doc__)
     p.add_argument("--config", help="path to a config TOML")
@@ -133,11 +158,7 @@ def build_parser():
     m = sub.add_parser("mirror", help="manage the rulezet mirror")
     msub = m.add_subparsers(dest="mirror_cmd", required=True)
 
-    s = msub.add_parser("sync", help="fetch, tag, compile, gate")
-    s.add_argument("--full", action="store_true", help="ignore the last-sync date")
-    s.add_argument("--limit", type=int, help="stop after N rules (trial runs)")
-    s.add_argument("--meta-only", action="store_true", help="metadata backfill")
-    s.set_defaults(func=cmd_mirror_sync)
+    _add_sync(msub, "sync", "fetch, tag, compile, gate")
 
     c = msub.add_parser("compile", help="recompile the mirror")
     c.add_argument("--no-validate", action="store_true")
@@ -156,6 +177,8 @@ def build_parser():
 
     st = msub.add_parser("status", help="what is on disk")
     st.set_defaults(func=cmd_mirror_status)
+
+    _add_sync(sub, "sync", "shortcut for `mirror sync`")
 
     sc = sub.add_parser("scan", help="what fires on one binary")
     sc.add_argument("binary")
