@@ -1,0 +1,67 @@
+# The known-clean corpus.
+#
+# Two mechanisms. Small probes are committed to `probes/` so a fresh install
+# has a working baseline offline. Everything larger is declared here and
+# fetched on demand by `rulezet-validate baseline sync`, because the repo has
+# no business carrying tens of megabytes of other people's binaries.
+#
+# A baseline artifact must be provably benign and independently verifiable.
+# "I built it myself" is not enough -- the URL and hash are what let a reviewer
+# reproduce the claim.
+
+[probes.clean_uclibc_fcntl]
+file = "probes/clean_uclibc_fcntl.elf"
+sha256 = "1794c4ad1d5872cfd2c1b3e81bb4d444df5b7c443f8310d6016fc2fe00e15d0c"
+arch = "ARM:LE:32"
+description = """
+Static ARM ELF containing only upstream uClibc 0.9.30.1 code, linked from the
+official mini-native-armv4l tarball (crt1.o + libc.a). Contains fcntl and
+fcntl64 and nothing else of substance.
+
+Exists because Elastic's Linux_Generic_Threat_d94e1020 -- mirrored by rulezet
+as adca4692-e22e-4952-a6b1-0baaa1e91ede -- matches uClibc's fcntl syscall
+wrapper, 9 bytes into the function. The rule passes a /usr/bin gate because
+glibc x86-64 does not contain those bytes.
+"""
+
+[probes.clean_uclibc_printf]
+file = "probes/clean_uclibc_printf.elf"
+sha256 = "7f9a44c728bad2bffa1b967861312dd50f0f1be13e7cd6d0fc1e91bf3506966b"
+arch = "ARM:LE:32"
+description = """
+Same provenance, linked to pull in printf. Contains uClibc's conversion
+specifier table "npxXoudifFeEgGaACScs".
+
+Exists because ELF_Toriilike_persist (521461a2-d480-4787-a6ee-e1c0d8648726)
+treats that table as a Torii botnet marker, joined by `or`, so it concludes
+Torii from "is an ELF and links printf". Measured against a 309-sample Mirai
+corpus: 125 samples carry the string, 1 carries the rule's actual persistence
+artifacts.
+"""
+
+# Corresponding source for both probes, and the build recipe. Required: the
+# probes are linked from LGPL-2.1 uClibc objects, so the source offer is not
+# optional.
+[probes.source]
+url = "https://uclibc.org/downloads/binaries/0.9.30.1/mini-native-armv4l.tar.bz2"
+sha256 = "e58eb493d0e545c709640b28adfbc0044cfe2d8eb0e0fe6369c99fa107b167f6"
+license = "LGPL-2.1"
+build = """
+tar -xf mini-native-armv4l.tar.bz2 -C rootfs
+R=rootfs/mini-native-armv4l
+ld.lld -o clean_uclibc_fcntl.elf --static -e _start --defsym=main=fcntl \
+  $R/usr/lib/crt1.o $R/usr/lib/crti.o \
+  --start-group $R/usr/lib/libc.a --end-group $R/usr/lib/crtn.o
+ld.lld -o clean_uclibc_printf.elf --static -e _start --defsym=main=printf \
+  -u vfprintf -u printf \
+  $R/usr/lib/crt1.o $R/usr/lib/crti.o \
+  --start-group $R/usr/lib/libc.a $R/usr/gcc/lib/libgcc.a --end-group \
+  $R/usr/lib/crtn.o
+"""
+
+# Fetched, not committed. `baseline sync` unpacks these and adds every ELF to
+# the corpus. Not yet implemented -- the entries are the specification.
+[fetch.uclibc_armv4l_rootfs]
+url = "https://uclibc.org/downloads/binaries/0.9.30.1/mini-native-armv4l.tar.bz2"
+sha256 = "e58eb493d0e545c709640b28adfbc0044cfe2d8eb0e0fe6369c99fa107b167f6"
+description = "65 clean ARM uClibc binaries: busybox, binutils, gcc, ldconfig."

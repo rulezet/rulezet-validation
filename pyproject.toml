@@ -1,0 +1,46 @@
+[project]
+name = "rulezet-validation"
+version = "0.1.0"
+description = "Mirror rulezet.org's YARA rules and validate them against known-clean binaries"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "rdmmf" }]
+keywords = ["yara", "rulezet", "false-positive", "malware", "detection-engineering"]
+classifiers = [
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+dependencies = ["yara-python>=4.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+rulezet-validate = "rulezet_validation.cli:main"
+
+[project.urls]
+Source = "https://github.com/rdmmf/rulezet-validation"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rulezet_validation = ["baseline/probes/*", "baseline/manifest.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: needs internet (deselect with '-m \"not network\"')"]
+
+[tool.ruff]
+line-length = 88
+
+# Pinned explicitly so a ruff upgrade cannot turn a green CI red without a
+# commit saying so. Pycodestyle, pyflakes, import order, pyupgrade, bugbear.
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

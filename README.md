@@ -1,0 +1,131 @@
+# rulezet-validation
+
+Mirror [rulezet.org](https://rulezet.org)'s YARA rules and validate them against
+known-clean binaries.
+
+Two halves that share a directory layout and nothing else:
+
+- **mirror** — fetch ~130k rules, tag them in Rulezet's own MISP-style
+  vocabulary, compile them, and gate them against a clean-binary baseline.
+- **validate** — judge a rule on its own merits, with no mirror involved.
+  *(landing next; see [Status](#status))*
+
+## Why
+
+A ruleset of 130k unreviewed bulk imports contains rules that fire on ordinary
+software. Some of those hits are correct — a capability rule saying "this binary
+speaks SMTP" is *right* about busybox, which ships a sendmail applet. Others are
+not: Elastic's `Linux_Generic_Threat_d94e1020` matches uClibc's `fcntl` syscall
+wrapper, so it fires on any binary statically linked against that libc.
+
+Telling those apart needs a baseline corpus that actually covers what the rules
+target. A baseline of `/usr/bin` is x86-64 dynamic glibc, and it cannot judge a
+rule that fingerprints statically linked embedded libc — the rule passes the
+gate and then matches every uClibc binary in the world. So this ships small
+uClibc probes as part of the default baseline, and treats the corpus itself as
+something to be declared and versioned rather than assumed.
+
+## Install
+
+```sh
+pip install rulezet-validation      # or: uv tool install rulezet-validation
+```
+
+One dependency (`yara-python`). No database, no services. State is files.
+
+## Quickstart
+
+```sh
+rulezet-validate mirror sync --limit 500    # trial run, no API key needed
+rulezet-validate mirror status
+rulezet-validate scan ./suspicious.elf
+```
+
+A full keyless sync is ~1300 paged requests. With an API key
+(`RULEZET_API_KEY`) it becomes a single `dumpRules` POST and later syncs are
+incremental. Every request this tool makes is a read; nothing is written back
+to rulezet.org.
+
+## Configuration
+
+Optional. First hit wins: `$RULEZET_CONFIG`, `./rulezet-validation.toml`,
+`~/.config/rulezet-validation/config.toml`. Environment always beats the file.
+
+```toml
+mirror_dir = "data/rulezet"
+baseline_dirs = ["/usr/bin"]
+baseline_max_files = 300
+baseline_probes = true
+allow_licenses = []          # e.g. ["cc0 1.0", "cc by 4.0"]; empty keeps all
+```
+
+## The quarantine criterion
+
+> A rule is quarantined **if and only if** it matched at least one file in the
+> baseline corpus, and its uuid is not in `released.txt`.
+
+That is the whole rule. It is an observation, not a judgement — nothing inspects
+a rule's quality, metadata, or author's intent, and no lint finding or risk
+score ever moves a file.
+
+Because a clean-binary hit is not automatically a defect, review is expected.
+Put the uuid in `released.txt` when the hit was legitimate; it is honoured on
+every later run, so a decision is never re-litigated. Explain the decision in
+the commit message that adds the line — that is the audit trail.
+
+Quarantined rules are **moved, not deleted**. `rules/` and `quarantine/` are
+both real directories you can compile, copy, or hand to another project.
+
+## Mirror layout
+
+```
+data/rulezet/
+  rules/<uuid>.yara       one file per rule; the uuid is the yara namespace
+  quarantine/<uuid>.yara  fired on the baseline
+  rules.compiled          saved yara ruleset
+  tags.json               {uuid: [misp-style tag, ...]}
+  quarantine.json         machine-readable record, merged across runs
+  quarantine.txt          same data, for eyes
+  released.txt            the override list — the only file humans edit
+  state.json              last_sync + the baseline the decisions were made with
+```
+
+Tags stay in Rulezet's vocabulary (`ms-caro-malware-full:malware-type="Ransom"`,
+`cve:CVE-2021-44228`). Mapping them into some other taxonomy is the consumer's
+job, not this library's.
+
+Nothing under `data/` is source. Regenerate it; never commit it.
+
+## Embedding
+
+```python
+from rulezet_validation import load_config, paths
+from rulezet_validation.sync import sync
+
+settings = load_config()
+sync(settings, paths(settings), on_rules=my_indexer)
+```
+
+`on_rules` receives `{uuid: metadata row}` for everything fetched — the seam for
+indexing rule provenance into a host application's own store.
+
+## Status
+
+Working: mirror sync, tagging, compile, gate, quarantine records, CLI, tests.
+
+Next, in order:
+
+1. `rulezet-validate check RULE.yar` — single-rule linter, no mirror required.
+   Static checks (glob collisions like `4 of ($arch*)` silently covering
+   `$archx*`; strings that alone satisfy a condition; weak strings) plus
+   empirical ones against the baseline.
+2. `baseline sync` — fetch the larger corpora declared in `baseline/manifest.toml`.
+3. `false-positive:risk` tags — emitted only where the baseline actually
+   exercises the rule, `cannot-be-judged` otherwise (which is most of a 130k
+   ruleset). `false-positive:confirmed` needs labelled malware analysis and is
+   deliberately not attempted yet.
+
+## Licence
+
+AGPL-3.0. See [NOTICE](NOTICE) for the licensing of fetched and bundled
+artifacts, which is not the same thing.

@@ -1,0 +1,13 @@
+# The mirror is a build artifact: 130k rule files with mixed licensing,
+# plus a ~440 MB compiled ruleset. Regenerate it, never commit it.
+data/
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+rulezet-validation.toml
