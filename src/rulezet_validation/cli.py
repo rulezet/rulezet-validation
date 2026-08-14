@@ -19,7 +19,7 @@ next; the bare-path form (`rulezet-validate my_rule.yar`) is reserved for it.
 import argparse
 import sys
 
-from . import config
+from . import __version__, config
 from . import mirror as mirror_mod
 from .gate import (
     Counter,
@@ -172,6 +172,9 @@ def _add_sync(sub, name, help_text):
 
 def build_parser():
     p = argparse.ArgumentParser(prog="rulezet-validate", description=__doc__)
+    p.add_argument(
+        "--version", action="version", version=f"rulezet-validate {__version__}"
+    )
     p.add_argument("--config", help="path to a config TOML")
     p.add_argument("--mirror-dir", help="override the mirror directory")
     sub = p.add_subparsers(dest="cmd", required=True)
