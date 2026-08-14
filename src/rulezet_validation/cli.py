@@ -29,6 +29,7 @@ from .gate import (
     scan_baseline,
     stale,
 )
+from .source import KEYLESS_MISSING, api_key
 from .sync import sync as run_sync
 
 
@@ -72,8 +73,17 @@ def cmd_mirror_check(args):
 def cmd_mirror_status(args):
     settings, paths = _resolved(args)
     state = mirror_mod.read_state(paths)
+    key = api_key(settings)
     n_rules = len(list(paths["rules"].glob("*.yara")))
     n_quar = len(list(paths["quarantine"].glob("*.yara")))
+    # Worth a line of its own: `source .env` without `export` sets a shell
+    # variable, not an environment one, so the key looks set to the user and is
+    # invisible to this process. Silently falling back to the public endpoint
+    # then costs them the fields in KEYLESS_MISSING with no hint why.
+    if key:
+        print(f"api key     set ({len(key)} chars)")
+    else:
+        print("api key     not set  " + "; ".join(sorted(KEYLESS_MISSING.values())))
     print(f"mirror      {paths['root']}")
     print(f"rules       {n_rules}")
     print(f"quarantine  {n_quar}")

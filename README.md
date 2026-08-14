@@ -76,13 +76,22 @@ without a key — that combination would skip all 130k rules and report an empty
 mirror as success.
 
 The key is read from the environment, not from a `.env` file — no dependency is
-worth it for one variable. If you keep one, source it yourself:
+worth it for one variable. If you keep one, note that a plain `source .env` sets
+a *shell* variable, which no child process inherits:
 
 ```sh
-set -a; . ./.env; set +a
+set -a; . ./.env; set +a          # exports everything in the file
+export RULEZET_API_KEY="..."      # or export it in .env directly
 ```
 
+`rulezet-validate mirror status` says whether the key actually reached the
+process, which is the quickest way to tell this apart from a config problem.
 `.env` is gitignored.
+
+Note that `--limit` deliberately ignores the key: `dumpRules` is all-or-nothing
+(~130k rules, 128 MB before the first byte is usable) and cannot fetch a subset,
+so a trial run pages the public endpoint instead. Drop `--limit` for a real
+sync.
 
 ### Backfilling an existing mirror
 
