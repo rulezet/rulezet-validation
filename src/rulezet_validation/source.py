@@ -90,7 +90,7 @@ def _post(url, body, key, timeout=600):
         return json.load(r)
 
 
-def fetch_rules(settings, since=None, limit=None, log=print):
+def fetch_rules(settings, since=None, limit=None, log=print, dump=False):
     """Every YARA rule on the instance, as the API's own dicts.
 
     With an API key this is one `dumpRules` POST (and `since` makes it
@@ -106,12 +106,18 @@ def fetch_rules(settings, since=None, limit=None, log=print):
     # 128 MB before the first byte is usable. So a trial run pages the public
     # endpoint instead, which really does stop early. Otherwise `--limit 2000`
     # would still cost the full ~2 minute download to then throw 128k rules away.
-    if key and limit:
+    if key and limit and not dump:
         log(
-            f"--limit {limit}: paging the public endpoint "
-            f"(dumpRules cannot fetch a subset, and it costs the fields in "
-            f"KEYLESS_MISSING)"
+            f"--limit {limit}: your API key is set, but dumpRules has no size "
+            f"parameter -- it would download all ~130k rules (128 MB) to then "
+            f"discard all but {limit}. Paging the public endpoint instead, "
+            f"which really does stop early."
         )
+        log(
+            "  the sample will therefore lack: "
+            + "; ".join(sorted(KEYLESS_MISSING.values()))
+        )
+        log("  pass --dump to use the key anyway and pay the full download.")
         key = ""
 
     if key:
@@ -132,6 +138,17 @@ def fetch_rules(settings, since=None, limit=None, log=print):
             # re-run between updates would otherwise raise.
             if e.code == 404:
                 return []
+            if e.code in (401, 403):
+                # A rejected key is a typo or an expired credential, not a bug.
+                # A stack trace here tells the user nothing they can act on, and
+                # buries the one fact that matters.
+                raise ValueError(
+                    f"rulezet.org rejected the API key (HTTP {e.code}). "
+                    f"Check RULEZET_API_KEY -- `rulezet-validate mirror status` "
+                    f"shows whether the value reaching this process is the one "
+                    f"you meant. Without a key, plain `sync` still works "
+                    f"against the public endpoint."
+                ) from None
             raise
         rules = (doc.get("data", {}).get("rules_by_format", {}) or {}).get("yara", [])
         return rules[:limit] if limit else rules

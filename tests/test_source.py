@@ -2,6 +2,8 @@
 
 import re
 
+import pytest
+
 from rulezet_validation.source import platform_tags, vulns
 
 CFGS = [
@@ -133,3 +135,31 @@ def test_no_dotenv_is_not_an_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("RULEZET_API_KEY", raising=False)
     assert config.load()["api_key"] == ""
+
+
+def test_a_rejected_key_is_reported_not_traced(monkeypatch):
+    """A typo'd credential is a user error; a stack trace buries the one fact
+    that matters."""
+    import urllib.error
+
+    from rulezet_validation import source
+
+    def forbidden(*a, **k):
+        raise urllib.error.HTTPError("u", 403, "FORBIDDEN", {}, None)
+
+    monkeypatch.setattr(source, "_post", forbidden)
+    with pytest.raises(ValueError, match="rejected the API key"):
+        source.fetch_rules({"api_key": "bad"}, log=lambda *_: None)
+
+
+def test_nothing_new_is_not_an_error(monkeypatch):
+    """An incremental sync with no updates answers 404."""
+    import urllib.error
+
+    from rulezet_validation import source
+
+    def not_found(*a, **k):
+        raise urllib.error.HTTPError("u", 404, "No rules found to dump.", {}, None)
+
+    monkeypatch.setattr(source, "_post", not_found)
+    assert source.fetch_rules({"api_key": "ok"}, log=lambda *_: None) == []

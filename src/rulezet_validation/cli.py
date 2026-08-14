@@ -43,7 +43,12 @@ def _resolved(args):
 def cmd_mirror_sync(args):
     settings, paths = _resolved(args)
     run_sync(
-        settings, paths, full=args.full, limit=args.limit, meta_only=args.meta_only
+        settings,
+        paths,
+        full=args.full,
+        limit=args.limit,
+        meta_only=args.meta_only,
+        dump=args.dump,
     )
     return 0
 
@@ -155,6 +160,12 @@ def _add_sync(sub, name, help_text):
     p.add_argument("--full", action="store_true", help="ignore the last-sync date")
     p.add_argument("--limit", type=int, help="stop after N rules (trial runs)")
     p.add_argument("--meta-only", action="store_true", help="metadata backfill")
+    p.add_argument(
+        "--dump",
+        action="store_true",
+        help="use the API key even with --limit; downloads everything, "
+        "then truncates. Slow, but the sample keeps cve/license/updated_at.",
+    )
     p.set_defaults(func=cmd_mirror_sync)
     return p
 
@@ -204,7 +215,13 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except ValueError as e:
+        # Configuration problems -- a rejected key, allow_licenses without one.
+        # The user can act on the sentence; the traceback only hides it.
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

@@ -99,10 +99,14 @@ api key     set (43 chars)
 api key     not set  no cve:/ghsa:/pysec: tags; no incremental sync; ...
 ```
 
-Note that `--limit` deliberately ignores the key: `dumpRules` is all-or-nothing
-(~130k rules, 128 MB before the first byte is usable) and cannot fetch a subset,
-so a trial run pages the public endpoint instead. Drop `--limit` for a real
-sync.
+Note that `--limit` deliberately ignores the key. `dumpRules` has no size
+parameter: it would download all ~130k rules (128 MB) and then discard all but
+the ones you asked for, so a trial run pages the public endpoint instead, which
+really does stop early. The trade-off is that the sample lacks the key-only
+fields.
+
+Drop `--limit` for a real sync, or pass `--dump` to use the key anyway and pay
+the full download for a small, fully-tagged sample.
 
 ### Backfilling an existing mirror
 

@@ -15,6 +15,7 @@ def sync(
     log=print,
     meta_only=False,
     on_rules=None,
+    dump=False,
 ):
     """Run a full sync cycle.
 
@@ -56,7 +57,9 @@ def sync(
     state = {} if (full or meta_only) else mirror.read_state(paths)
 
     t0 = time.time()
-    rules = fetch_rules(settings, since=state.get("last_sync"), limit=limit, log=log)
+    rules = fetch_rules(
+        settings, since=state.get("last_sync"), limit=limit, log=log, dump=dump
+    )
     log(f"fetched {len(rules)} rules in {time.time() - t0:.0f}s")
     if not rules:
         log("nothing new.")
