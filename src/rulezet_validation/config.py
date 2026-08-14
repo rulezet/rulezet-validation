@@ -10,7 +10,12 @@ Lookup order for the file, first hit wins:
     ./rulezet-validation.toml
     $XDG_CONFIG_HOME/rulezet-validation/config.toml  (or ~/.config/...)
 
-Environment always beats the file, so CI can override without writing one.
+A `.env` next to where you are standing is read too (or `$RULEZET_ENV`), so
+`RULEZET_API_KEY` can live in a file without being exported by hand. The real
+environment still wins over it, so a one-shot `RULEZET_API_KEY=... rulezet-validate`
+overrides whatever the file says.
+
+Precedence, strongest first: environment, `.env`, config file, defaults.
 """
 
 import os
@@ -69,6 +74,38 @@ ENV = {
 }
 
 
+def read_dotenv(path=None):
+    """`KEY=value` pairs from a `.env`, or `{}` if there is not one.
+
+    Fifteen lines instead of a dependency, and it handles the three things a
+    real `.env` actually contains: `export` prefixes, quoted values, comments.
+
+    Inline `#` is deliberately *not* treated as a comment -- an API key may
+    contain one, and silently truncating a credential is a worse failure than
+    not supporting a trailing comment.
+    """
+    p = Path(path or os.environ.get("RULEZET_ENV") or ".env")
+    if not p.exists():
+        return {}
+    out = {}
+    try:
+        lines = p.read_text().splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.removeprefix("export ").strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key:
+            out[key] = value
+    return out
+
+
 def _config_path():
     explicit = os.environ.get("RULEZET_CONFIG")
     if explicit:
@@ -106,9 +143,12 @@ def load(path=None):
         for key in out:
             if key in data:
                 out[key] = data[key]
+    # The real environment wins over `.env`, so a one-shot override on the
+    # command line beats a stale file.
+    env = {**read_dotenv(), **os.environ}
     for env_key, key in ENV.items():
-        if os.environ.get(env_key):
-            out[key] = _coerce(os.environ[env_key], DEFAULTS[key])
+        if env.get(env_key):
+            out[key] = _coerce(env[env_key], DEFAULTS[key])
     return out
 
 

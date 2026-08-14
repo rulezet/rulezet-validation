@@ -70,3 +70,66 @@ def test_keyless_rows_cannot_produce_vulnerability_tags():
         "format": "yara",
     }
     assert vulns(keyless_row) == []
+
+
+# --- .env -------------------------------------------------------------------
+
+
+def _env_file(tmp_path, body):
+    (tmp_path / ".env").write_text(body)
+    return tmp_path
+
+
+def test_dotenv_is_read_without_being_exported(tmp_path, monkeypatch):
+    """`source .env` sets a shell variable no child inherits. Reading the file
+    is the whole point of having one."""
+    from rulezet_validation import config
+
+    monkeypatch.chdir(_env_file(tmp_path, 'RULEZET_API_KEY="secret123"\n'))
+    monkeypatch.delenv("RULEZET_API_KEY", raising=False)
+    assert config.load()["api_key"] == "secret123"
+
+
+def test_the_real_environment_beats_dotenv(tmp_path, monkeypatch):
+    """So a one-shot override on the command line wins over a stale file."""
+    from rulezet_validation import config
+
+    monkeypatch.chdir(_env_file(tmp_path, "RULEZET_API_KEY=from_file\n"))
+    monkeypatch.setenv("RULEZET_API_KEY", "from_env")
+    assert config.load()["api_key"] == "from_env"
+
+
+def test_dotenv_handles_what_dotenvs_actually_contain(tmp_path, monkeypatch):
+    from rulezet_validation import config
+
+    monkeypatch.chdir(
+        _env_file(
+            tmp_path,
+            "# a comment\n\n"
+            "export RULEZET_API_KEY='single'\n"
+            "RULEZET_BASELINE_MAX_FILES=7\n"
+            "malformed line without equals\n",
+        )
+    )
+    monkeypatch.delenv("RULEZET_API_KEY", raising=False)
+    monkeypatch.delenv("RULEZET_BASELINE_MAX_FILES", raising=False)
+    s = config.load()
+    assert s["api_key"] == "single"
+    assert s["baseline_max_files"] == 7
+
+
+def test_an_inline_hash_is_not_a_comment(tmp_path, monkeypatch):
+    """Truncating a credential is worse than not supporting trailing comments."""
+    from rulezet_validation import config
+
+    monkeypatch.chdir(_env_file(tmp_path, "RULEZET_API_KEY=abc#def\n"))
+    monkeypatch.delenv("RULEZET_API_KEY", raising=False)
+    assert config.load()["api_key"] == "abc#def"
+
+
+def test_no_dotenv_is_not_an_error(tmp_path, monkeypatch):
+    from rulezet_validation import config
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("RULEZET_API_KEY", raising=False)
+    assert config.load()["api_key"] == ""

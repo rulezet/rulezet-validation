@@ -75,18 +75,29 @@ missing tags months later, and it refuses to start if `allow_licenses` is set
 without a key — that combination would skip all 130k rules and report an empty
 mirror as success.
 
-The key is read from the environment, not from a `.env` file — no dependency is
-worth it for one variable. If you keep one, note that a plain `source .env` sets
-a *shell* variable, which no child process inherits:
+A `.env` in the working directory is read automatically (or `$RULEZET_ENV`),
+so this is enough:
 
 ```sh
-set -a; . ./.env; set +a          # exports everything in the file
-export RULEZET_API_KEY="..."      # or export it in .env directly
+echo 'RULEZET_API_KEY="..."' > .env
+rulezet-validate sync
 ```
 
-`rulezet-validate mirror status` says whether the key actually reached the
-process, which is the quickest way to tell this apart from a config problem.
+No `export`, no `set -a`. `export` prefixes and quoted values are handled;
+an inline `#` is *not* treated as a comment, because silently truncating a
+credential is a worse failure than not supporting trailing comments.
+
+Precedence, strongest first: environment, `.env`, config file, defaults — so a
+one-shot `RULEZET_API_KEY=... rulezet-validate sync` still overrides the file.
 `.env` is gitignored.
+
+`rulezet-validate mirror status` reports whether a key actually reached the
+process, by length rather than value:
+
+```
+api key     set (43 chars)
+api key     not set  no cve:/ghsa:/pysec: tags; no incremental sync; ...
+```
 
 Note that `--limit` deliberately ignores the key: `dumpRules` is all-or-nothing
 (~130k rules, 128 MB before the first byte is usable) and cannot fetch a subset,
