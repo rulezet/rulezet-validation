@@ -12,6 +12,7 @@ RULE_TEXT = 'rule fixture_ok { strings: $a = "CANARY_9271" condition: $a }'
 def _settings(tmp_path, **over):
     s = dict(config.DEFAULTS)
     s["mirror_dir"] = str(tmp_path / "mirror")
+    s["released_file"] = str(tmp_path / "released.txt")
     s.update(over)
     return s
 
@@ -124,3 +125,19 @@ def test_meta_only_leaves_rule_files_alone(tmp_path):
     )
     assert (p["rules"] / "u1.yara").read_text() == before
     assert rows["u1"]["uuid"] == "u1"
+
+
+def test_the_mirror_ignores_itself_wherever_it_lands(tmp_path):
+    """mirror_dir is configurable; a 440 MB build artifact must not be one
+    `git add -A` away from a commit just because someone moved it."""
+    p = _paths(tmp_path)
+    f = mirror.protect(p)
+    assert f.read_text().strip().endswith("*")
+
+
+def test_protect_does_not_clobber_an_existing_gitignore(tmp_path):
+    p = _paths(tmp_path)
+    p["root"].mkdir(parents=True, exist_ok=True)
+    (p["root"] / ".gitignore").write_text("!keep-me\n")
+    mirror.protect(p)
+    assert (p["root"] / ".gitignore").read_text() == "!keep-me\n"

@@ -39,6 +39,12 @@ DEFAULTS = {
     # Include the bundled uClibc probes in the baseline. Turning this off
     # re-opens the static-embedded-libc blind spot; see README.
     "baseline_probes": True,
+    # Reviewed uuids the gate must never quarantine. Deliberately *outside*
+    # `mirror_dir`: everything in there is regenerable build output that gets
+    # wiped and gitignored, and this file is neither. It is hand-written, it is
+    # the only durable record of a human decision, and its history is meant to
+    # live in version control.
+    "released_file": "released.txt",
 }
 
 # Environment variable -> config key. Values arrive as strings and are coerced
@@ -49,6 +55,7 @@ ENV = {
     "RULEZET_DIR": "mirror_dir",
     "RULEZET_BASELINE_DIRS": "baseline_dirs",
     "RULEZET_BASELINE_MAX_FILES": "baseline_max_files",
+    "RULEZET_RELEASED_FILE": "released_file",
 }
 
 
@@ -114,7 +121,10 @@ def paths(settings=None):
         "tags": d / "tags.json",
         "quarantine_json": d / "quarantine.json",
         "quarantine_log": d / "quarantine.txt",
-        "released": d / "released.txt",
+        "released": Path(settings["released_file"]).expanduser(),
+        # Where it used to live, read as a fallback so an existing mirror
+        # does not silently lose its reviewed decisions on upgrade.
+        "released_legacy": d / "released.txt",
         "state": d / "state.json",
         "tag_config": d / "platform_tag_configs.json",
         "readme": d / "SYNCED_FROM.md",

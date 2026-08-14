@@ -52,7 +52,7 @@ def sync(
                 "allow_licenses to mirror everything."
             )
 
-    paths["root"].mkdir(parents=True, exist_ok=True)
+    mirror.protect(paths)
     state = {} if (full or meta_only) else mirror.read_state(paths)
 
     t0 = time.time()

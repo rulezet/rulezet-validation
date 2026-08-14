@@ -13,6 +13,25 @@ import time
 from .source import platform_tags
 
 
+def protect(paths):
+    """Drop a `.gitignore` of `*` into the mirror root.
+
+    The repo's own `.gitignore` covers the default `data/`, but `mirror_dir` is
+    configurable and a mirror is 130k rule files plus a ~440 MB compiled blob
+    with mixed upstream licensing. Pointing it anywhere else inside a checkout
+    should not put that one `git add -A` away from being committed, so the
+    directory ignores itself wherever it lands.
+
+    Note this is the reason `released_file` lives outside: it is a hand-written
+    record meant to be committed, and it cannot be both.
+    """
+    paths["root"].mkdir(parents=True, exist_ok=True)
+    f = paths["root"] / ".gitignore"
+    if not f.exists():
+        f.write_text("# Build output: regenerate with `rulezet-validate sync`.\n*\n")
+    return f
+
+
 def write_rules(rules, tag_config, paths, settings, log=print, write_files=True):
     """Rule text to `rules/<uuid>.yara`, tags to the sidecar.
 

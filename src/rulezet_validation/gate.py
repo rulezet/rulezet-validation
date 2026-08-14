@@ -116,16 +116,24 @@ def read_released(paths):
 
     Deliberately a plain text file and not JSON: the cheapest possible
     contributor action is appending a line, and the reason for the decision
-    belongs in the commit message that added it.
+    belongs in the commit message that added it -- which is also why it lives
+    outside `mirror_dir`, where it would be gitignored build output that a
+    `rm -rf` throws away.
+
+    The old in-mirror location is still read, so upgrading does not silently
+    drop decisions someone already made.
     """
-    p = paths["released"]
-    if not p.exists():
-        return set()
-    return {
-        line.strip()
-        for line in p.read_text().splitlines()
-        if line.strip() and not line.startswith("#")
-    }
+    out = set()
+    for key in ("released", "released_legacy"):
+        p = paths.get(key)
+        if not p or not p.exists():
+            continue
+        out |= {
+            line.strip()
+            for line in p.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+    return out
 
 
 def scan_baseline(rules, files, log=print):

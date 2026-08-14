@@ -22,6 +22,9 @@ def _setup(tmp_path, **over):
     s["mirror_dir"] = str(tmp_path / "mirror")
     s["baseline_dirs"] = [str(clean)]
     s["baseline_probes"] = False  # deterministic corpus for the test
+    # released_file defaults to a cwd-relative path, which across a suite means
+    # one test's decision leaks into the next. Pin it per-test.
+    s["released_file"] = str(tmp_path / "released.txt")
     s.update(over)
 
     p = config.paths(s)
@@ -228,3 +231,19 @@ def test_rules_do_not_get_to_write_to_our_stdout(tmp_path, capsys):
 
     assert "The Magic Header" not in capsys.readouterr().out
     assert any("console messages from rules suppressed" in line for line in logged)
+
+
+def test_released_lives_outside_the_mirror(tmp_path):
+    """It is a hand-written record meant to be committed; the mirror is
+    gitignored build output that gets wiped."""
+    s, p = _setup(tmp_path)
+    assert p["root"] not in p["released"].parents
+
+
+def test_the_old_in_mirror_location_is_still_honoured(tmp_path):
+    """Upgrading must not silently drop decisions someone already reviewed."""
+    s, p = _setup(tmp_path)
+    p["released_legacy"].parent.mkdir(parents=True, exist_ok=True)
+    p["released_legacy"].write_text("noisy-uuid\n")
+    assert gate.gate(_compiled(p), p, s, log=lambda *_: None) == {}
+    assert (p["rules"] / "noisy-uuid.yara").exists()

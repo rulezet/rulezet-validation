@@ -184,9 +184,30 @@ data/rulezet/
   tags.json               {uuid: [misp-style tag, ...]}
   quarantine.json         machine-readable record, merged across runs
   quarantine.txt          same data, for eyes
-  released.txt            the override list — the only file humans edit
   state.json              last_sync + the baseline the decisions were made with
+  .gitignore              written on sync: the mirror ignores itself
 ```
+
+`released.txt` deliberately lives **outside** the mirror, next to your config
+(`released_file`, default `./released.txt`). Everything under `mirror_dir` is
+regenerable build output — gitignored, safe to `rm -rf`. `released.txt` is
+neither: it is hand-written, it is the only durable record of a human decision,
+and its history belongs in version control. It cannot be both ignored and
+committed, so it is not stored with the things that are ignored. The old
+in-mirror location is still read, so upgrading loses nothing.
+
+### What is and is not gitignored
+
+| | |
+|---|---|
+| `data/` (default `mirror_dir`) | ignored by the repo's `.gitignore` |
+| any other `mirror_dir` | ignores itself — `sync` writes a `.gitignore` of `*` into it |
+| `released.txt` | **not** ignored. Commit it; that is the audit trail |
+| `.env`, `rulezet-validation.toml` | ignored |
+
+One thing to know before wiping a mirror: `quarantine.json` holds `first_seen`
+for every verdict, and that history is not regenerable. The rules and the
+compiled ruleset are.
 
 Tags stay in Rulezet's vocabulary (`ms-caro-malware-full:malware-type="Ransom"`,
 `cve:CVE-2021-44228`). Mapping them into some other taxonomy is the consumer's
