@@ -52,7 +52,7 @@ DEFAULT_EXCLUDE = Path(__file__).resolve().parent / "baseline" / "exclude.txt"
 # ponytail: flat thresholds, revisit if the baseline grows past a few thousand
 # files, at which point a fraction starts meaning more than a count.
 RISK_THRESHOLDS = ((20, "high"), (5, "medium"), (1, "low"))
-RISK_PREFIX = "false-positive:risk:"
+RISK_PREFIX = "false-positive:risk="
 
 
 def propose_risk(hits):

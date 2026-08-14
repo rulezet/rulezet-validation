@@ -185,6 +185,6 @@ def test_boolean_and_list_settings_coerce_from_the_environment(monkeypatch):
 def test_upstream_risk_tags_survive_the_mirror():
     """Rulezet does not emit these yet; when it does they must not be dropped."""
     tags = platform_tags(
-        {"title": "x", "tags": ["false-positive:risk:high", "sector:finance"]}, CFGS
+        {"title": "x", "tags": ["false-positive:risk=high", "sector:finance"]}, CFGS
     )
-    assert tags == ["false-positive:risk:high"]
+    assert tags == ["false-positive:risk=high"]

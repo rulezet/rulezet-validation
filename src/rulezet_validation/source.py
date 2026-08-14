@@ -32,6 +32,7 @@ import urllib.error
 import urllib.request
 
 from .config import DEFAULT_URL
+from .gate import RISK_PREFIX
 
 # Rulezet auto-tags its bulk imports by running regexes over each rule's title
 # and description (`app/core/utils/default_platform_tag_configs.json`). Running
@@ -233,7 +234,7 @@ def platform_tags(rule, tag_config):
     tags += [
         t
         for t in (raw if isinstance(raw, list) else [raw])
-        if isinstance(t, str) and t.startswith("false-positive:risk:")
+        if isinstance(t, str) and t.startswith(RISK_PREFIX)
     ]
     # Underscores become spaces first. Rulezet's regexes are `\b`-anchored and
     # written for prose descriptions, but a mirrored rule's *title* is almost

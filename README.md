@@ -238,7 +238,7 @@ indexing rule provenance into a host application's own store.
 
 Working: sync, tagging, compile, gate, quarantine records, recheck, CLI.
 
-Each quarantine record carries a `proposed_tag` — `false-positive:risk:` `high`
+Each quarantine record carries a `proposed_tag` — `false-positive:risk=high`
 (20+ clean binaries hit), `medium` (5–19), `low` (1–4), or `cannot-be-judged`
 when there is no observation behind the record at all. It is a suggestion for
 the reviewer, not a verdict: nothing moves on it, and a risk tag already
