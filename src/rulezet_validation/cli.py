@@ -7,6 +7,7 @@ module. Logic lives in `source`, `mirror`, `gate`, `sync`.
     rulezet-validate mirror check           # re-scan the baseline, move nothing
     rulezet-validate mirror compile
     rulezet-validate mirror status
+    rulezet-validate mirror recheck         # put quarantined rules back on trial
     rulezet-validate scan BINARY            # what fires on one file
     rulezet-validate baseline list
 
@@ -19,7 +20,7 @@ import sys
 
 from . import config
 from . import mirror as mirror_mod
-from .gate import baseline_files, read_released, scan_baseline
+from .gate import baseline_files, read_released, recheck, scan_baseline, stale
 from .sync import sync as run_sync
 
 
@@ -70,8 +71,33 @@ def cmd_mirror_status(args):
     print(f"quarantine  {n_quar}")
     print(f"released    {len(read_released(paths))}")
     print(f"compiled    {'yes' if paths['compiled'].exists() else 'no'}")
+    stale_now = stale(paths, settings)
     print(f"last sync   {state.get('last_sync', 'never')}")
+    if stale_now:
+        reasons = {}
+        for reason in stale_now.values():
+            reasons[reason] = reasons.get(reason, 0) + 1
+        detail = ", ".join(f"{n} {r}" for r, n in sorted(reasons.items()))
+        print(f"stale       {len(stale_now)} quarantined ({detail})")
+        print("            `rulezet-validate mirror recheck` to re-evaluate")
     return 0
+
+
+def cmd_mirror_recheck(args):
+    """Re-evaluate quarantined rules. Stale ones by default, --all for every one."""
+    settings, paths = _resolved(args)
+    if args.all:
+        uuids = None
+    else:
+        stale_now = stale(paths, settings)
+        if not stale_now:
+            print("nothing stale; --all to recheck every quarantined rule")
+            return 0
+        for uuid, reason in sorted(stale_now.items()):
+            print(f"  {uuid}\t{reason}")
+        uuids = list(stale_now)
+    result = recheck(paths, settings, uuids=uuids)
+    return 0 if result else 1
 
 
 def cmd_scan(args):
@@ -119,6 +145,14 @@ def build_parser():
 
     k = msub.add_parser("check", help="re-scan the baseline, report only")
     k.set_defaults(func=cmd_mirror_check)
+
+    rc = msub.add_parser("recheck", help="put quarantined rules back on trial")
+    rc.add_argument(
+        "--all",
+        action="store_true",
+        help="re-evaluate every quarantined rule, not only the stale ones",
+    )
+    rc.set_defaults(func=cmd_mirror_recheck)
 
     st = msub.add_parser("status", help="what is on disk")
     st.set_defaults(func=cmd_mirror_status)

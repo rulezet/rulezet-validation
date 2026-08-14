@@ -76,6 +76,40 @@ the commit message that adds the line — that is the audit trail.
 Quarantined rules are **moved, not deleted**. `rules/` and `quarantine/` are
 both real directories you can compile, copy, or hand to another project.
 
+### A quarantine is a measurement, not a sentence
+
+A verdict is only true of the rule text it judged and the corpus it judged
+against. Both move. So each entry in `quarantine.json` records a hash of the
+rule and a signature of the baseline, and a decision goes **stale** when either
+changes:
+
+- `rule_changed` — upstream fixed it; the verdict describes bytes that no
+  longer exist.
+- `baseline_changed` — a probe was added, a corpus swapped. The rule was judged
+  against a different world.
+- `unverifiable` — quarantined before hashes were recorded, so nothing can
+  claim the verdict still holds.
+
+```sh
+rulezet-validate mirror status     # reports how many are stale, and why
+rulezet-validate mirror recheck    # put the stale ones back on trial
+rulezet-validate mirror recheck --all
+```
+
+`recheck` returns the selected rules to `rules/`, recompiles, and re-runs the
+gate: whatever still fires goes back to quarantine with a fresh verdict,
+whatever doesn't simply stays. `first_seen` survives, so history isn't rewritten
+by a retry, and `released.txt` is untouched — a human decision is not something
+a re-run gets to overturn.
+
+This is never automatic. A sync reports staleness and stops, because silently
+reopening a reviewed decision is its own kind of wrong.
+
+Sync keeps quarantined rules' text current, writing updates into `quarantine/`
+rather than readmitting them. Skipping them instead — the obvious option — would
+pin each rule at the version that got it quarantined, so an upstream fix could
+never arrive and staleness could never be detected.
+
 ## Mirror layout
 
 ```

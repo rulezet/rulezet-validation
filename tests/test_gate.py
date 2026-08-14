@@ -102,3 +102,104 @@ def test_bundled_probes_are_part_of_the_default_baseline(tmp_path):
     names = {f.name for f in gate.baseline_files(s)}
     assert "clean_uclibc_fcntl.elf" in names
     assert "clean_uclibc_printf.elf" in names
+
+
+# --- Revisiting a decision --------------------------------------------------
+
+
+def test_a_fresh_verdict_is_not_stale(tmp_path):
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    assert gate.stale(p, s) == {}
+
+
+def test_an_upstream_fix_makes_the_verdict_stale(tmp_path):
+    """The whole point: a quarantine must not outlive the rule it judged."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    (p["quarantine"] / "noisy-uuid.yara").write_text(QUIET)  # author fixed it
+    assert gate.stale(p, s) == {"noisy-uuid": "rule_changed"}
+
+
+def test_changing_the_baseline_makes_every_verdict_stale(tmp_path):
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    (tmp_path / "clean" / "another.bin").write_bytes(b"more clean bytes\n")
+    assert gate.stale(p, s) == {"noisy-uuid": "baseline_changed"}
+
+
+def test_verdicts_without_a_hash_cannot_claim_to_still_hold(tmp_path):
+    """A mirror gated before hashes existed has nothing to compare against."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    doc = json.loads(p["quarantine_json"].read_text())
+    del doc["quarantined"]["noisy-uuid"]["rule_sha256"]
+    p["quarantine_json"].write_text(json.dumps(doc))
+    assert gate.stale(p, s) == {"noisy-uuid": "unverifiable"}
+
+
+def test_recheck_clears_a_rule_that_no_longer_fires(tmp_path):
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    (p["quarantine"] / "noisy-uuid.yara").write_text(QUIET)
+
+    result = gate.recheck(p, s, log=lambda *_: None)
+    assert result["cleared"] == ["noisy-uuid"]
+    assert (p["rules"] / "noisy-uuid.yara").exists()
+    assert not (p["quarantine"] / "noisy-uuid.yara").exists()
+
+
+def test_recheck_re_quarantines_a_rule_that_still_fires(tmp_path):
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    result = gate.recheck(p, s, log=lambda *_: None)
+    assert result["cleared"] == []
+    assert (p["quarantine"] / "noisy-uuid.yara").exists()
+
+
+def test_recheck_preserves_first_seen(tmp_path):
+    """Re-trying a rule is not the same as meeting it for the first time."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    first = json.loads(p["quarantine_json"].read_text())
+    gate.recheck(p, s, log=lambda *_: None)
+    second = json.loads(p["quarantine_json"].read_text())
+    assert (
+        second["quarantined"]["noisy-uuid"]["first_seen"]
+        == first["quarantined"]["noisy-uuid"]["first_seen"]
+    )
+
+
+def test_recheck_honours_released(tmp_path):
+    """A human decision is not something a re-run gets to overturn."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    p["released"].write_text("noisy-uuid\n")
+    gate.recheck(p, s, log=lambda *_: None)
+    assert (p["rules"] / "noisy-uuid.yara").exists()
+
+
+def test_recheck_can_be_scoped_to_specific_uuids(tmp_path):
+    s, p = _setup(tmp_path)
+    (p["quarantine"] / "unrelated.yara").write_text(QUIET)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    result = gate.recheck(p, s, uuids=["noisy-uuid"], log=lambda *_: None)
+    assert result["rechecked"] == ["noisy-uuid"]
+    assert (p["quarantine"] / "unrelated.yara").exists()
+
+
+def test_a_cleared_rule_is_marked_not_erased(tmp_path):
+    """History is kept, but a past verdict must not read as a current one."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    assert json.loads(p["quarantine_json"].read_text())["quarantined"]["noisy-uuid"][
+        "status"
+    ] == "quarantined"
+
+    (p["quarantine"] / "noisy-uuid.yara").write_text(QUIET)
+    gate.recheck(p, s, log=lambda *_: None)
+
+    entry = json.loads(p["quarantine_json"].read_text())["quarantined"]["noisy-uuid"]
+    assert entry["status"] == "cleared"
+    assert entry["first_seen"]
+    assert "noisy-uuid\tnoisy" in p["quarantine_log"].read_text()

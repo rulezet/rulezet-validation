@@ -51,13 +51,20 @@ def test_license_filter_skips_disallowed_rules(tmp_path):
     assert not (p["rules"] / "u1.yara").exists()
 
 
-def test_quarantined_rules_are_not_rewritten_by_a_later_sync(tmp_path):
-    """Otherwise every sync would silently undo the gate's decisions."""
+def test_a_quarantined_rule_is_updated_in_place_not_readmitted(tmp_path):
+    """New text lands in quarantine/, never back in rules/.
+
+    Readmitting it would silently undo the gate. Skipping it entirely -- the
+    other obvious option -- would pin the rule at the version that was
+    quarantined, so an upstream fix could never arrive and the recorded verdict
+    would describe bytes that no longer exist.
+    """
     p = _paths(tmp_path)
     p["quarantine"].mkdir(parents=True, exist_ok=True)
-    (p["quarantine"] / "u1.yara").write_text(RULE_TEXT)
+    (p["quarantine"] / "u1.yara").write_text("rule old_version { condition: false }")
     mirror.write_rules([_rule()], [], p, _settings(tmp_path), log=lambda *_: None)
     assert not (p["rules"] / "u1.yara").exists()
+    assert (p["quarantine"] / "u1.yara").read_text() == RULE_TEXT
 
 
 def test_merge_tags_only_ever_adds(tmp_path):

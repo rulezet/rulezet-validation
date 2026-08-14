@@ -3,7 +3,7 @@
 import time
 
 from . import mirror
-from .gate import baseline_files, gate
+from .gate import baseline_files, describe_baseline, gate, stale
 from .source import fetch_rules, load_tag_config
 
 
@@ -56,14 +56,19 @@ def sync(
         # compiled ruleset, so it has to be rebuilt from what survived.
         mirror.compile_mirror(paths, log=log, validate=False)
 
+    n_stale = len(stale(paths, settings))
+    if n_stale:
+        # Never rechecked automatically: a sync must not silently reopen
+        # decisions someone reviewed.
+        log(
+            f"  {n_stale} quarantined rules are stale "
+            f"(run `rulezet-validate mirror recheck`)"
+        )
+
     mirror.write_state(
         paths,
         last_sync=time.strftime("%Y-%m-%d %H:%M"),
-        baseline={
-            "files": len(baseline_files(settings)),
-            "dirs": list(settings.get("baseline_dirs") or []),
-            "probes": bool(settings.get("baseline_probes", True)),
-        },
+        baseline=describe_baseline(baseline_files(settings), settings),
     )
     paths["readme"].write_text(
         "# Synced from rulezet.org\n\n"

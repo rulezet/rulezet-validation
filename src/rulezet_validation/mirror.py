@@ -38,8 +38,16 @@ def write_rules(rules, tag_config, paths, settings, log=print, write_files=True)
         if allow and str(rule.get("license") or "").strip().lower() not in allow:
             skipped += 1
             continue
-        if write_files and uuid not in quarantined:
-            (paths["rules"] / f"{uuid}.yara").write_text(text)
+        if write_files:
+            # A quarantined rule still gets its new text, written to
+            # `quarantine/` rather than `rules/`. Skipping it entirely (the
+            # obvious thing) pins the rule at the version that was quarantined,
+            # so an upstream fix can never arrive and the verdict describes
+            # bytes that no longer exist anywhere. Keeping the text current is
+            # also what makes staleness detectable: `gate.stale()` compares the
+            # file against the hash recorded when the verdict was made.
+            target = "quarantine" if uuid in quarantined else "rules"
+            (paths[target] / f"{uuid}.yara").write_text(text)
             written += 1
 
         rule_tags = platform_tags(rule, tag_config)
