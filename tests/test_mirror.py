@@ -95,3 +95,13 @@ def test_compile_drops_unparseable_rules_instead_of_failing(tmp_path):
     assert rules is not None
     assert not (p["rules"] / "bad.yara").exists()
     assert p["compiled"].exists()
+
+
+def test_license_filter_refuses_to_run_keyless(tmp_path, monkeypatch):
+    """Otherwise it silently skips all 130k rules and reports an empty mirror."""
+    monkeypatch.delenv("RULEZET_API_KEY", raising=False)
+    from rulezet_validation.sync import sync
+
+    s = _settings(tmp_path, allow_licenses=["cc0 1.0"], api_key="")
+    with pytest.raises(ValueError, match="allow_licenses"):
+        sync(s, config.paths(s), log=lambda *_: None)

@@ -12,7 +12,13 @@ Three facts about the API shape this whole module:
     API key `dumpRules` returns everything in one POST and takes an
     `updated_after` for incremental syncs. Both are reads -- nothing is ever
     written back to rulezet.org.
-  * A rule's `cve_id` *is* in every response, so `cve:`/`ghsa:` tags are free.
+  * **The public and private paths do not return the same fields.** A
+    `dumpRules` row carries `cve_id`, `license` and `updated_at`; a keyless
+    `searchPage` row carries only author, content, creation_date, description,
+    format, title, uuid. So without an API key there are no vulnerability tags
+    to derive, no license to filter on, and no timestamp to sync incrementally
+    against. See `KEYLESS_MISSING`, and note that this is a silent difference
+    in the API -- nothing errors, the fields are simply absent.
 
 Tags stay in Rulezet's own MISP-style form (`namespace:predicate="value"`).
 Mapping them into some other vocabulary is the consumer's job, not this
@@ -52,17 +58,32 @@ VULN_RE = re.compile(r"\b(CVE|GHSA|PYSEC)[-–][\w.–-]+", re.I)
 # worth the dependency. Every one of these is a read.
 
 
+def api_key(settings):
+    """The configured key, or "" -- environment beating the config file."""
+    return settings.get("api_key") or os.environ.get("RULEZET_API_KEY") or ""
+
+
+# Fields the public `searchPage` endpoint does not return, with what each one
+# costs you. Measured against the live API, not assumed: a keyless row carries
+# only author, content, creation_date, description, format, title, uuid.
+KEYLESS_MISSING = {
+    "cve_id": "no cve:/ghsa:/pysec: tags",
+    "license": "no license filtering",
+    "updated_at": "no incremental sync",
+}
+
+
 def _get(url, timeout=120):
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return json.load(r)
 
 
-def _post(url, body, api_key, timeout=600):
+def _post(url, body, key, timeout=600):
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", "X-API-KEY": api_key},
+        headers={"Content-Type": "application/json", "X-API-KEY": key},
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -79,20 +100,21 @@ def fetch_rules(settings, since=None, limit=None, log=print):
     about.
     """
     base = (settings.get("url") or DEFAULT_URL).rstrip("/")
-    api_key = settings.get("api_key") or os.environ.get("RULEZET_API_KEY")
+    key = api_key(settings)
 
     # `dumpRules` has no size parameter -- it is all-or-nothing, ~130k rules and
     # 128 MB before the first byte is usable. So a trial run pages the public
     # endpoint instead, which really does stop early. Otherwise `--limit 2000`
     # would still cost the full ~2 minute download to then throw 128k rules away.
-    if api_key and limit:
+    if key and limit:
         log(
             f"--limit {limit}: paging the public endpoint "
-            f"(dumpRules cannot fetch a subset)"
+            f"(dumpRules cannot fetch a subset, and it costs the fields in "
+            f"KEYLESS_MISSING)"
         )
-        api_key = None
+        key = ""
 
-    if api_key:
+    if key:
         body = {"format_name": "yara"}
         if since:
             body["updated_after"] = since
@@ -103,7 +125,7 @@ def fetch_rules(settings, since=None, limit=None, log=print):
             "anything is written"
         )
         try:
-            doc = _post(f"{base}/api/rule/private/dumpRules", body, api_key)
+            doc = _post(f"{base}/api/rule/private/dumpRules", body, key)
         except urllib.error.HTTPError as e:
             # An incremental sync with nothing new answers 404 "No rules found
             # to dump." That is the ordinary quiet case, not a failure -- every

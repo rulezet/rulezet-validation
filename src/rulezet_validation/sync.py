@@ -4,7 +4,7 @@ import time
 
 from . import mirror
 from .gate import baseline_files, describe_baseline, gate, stale
-from .source import fetch_rules, load_tag_config
+from .source import KEYLESS_MISSING, api_key, fetch_rules, load_tag_config
 
 
 def sync(
@@ -28,6 +28,20 @@ def sync(
     ignores the last-sync date by definition, since the rules it describes are
     the old ones.
     """
+    keyless = not api_key(settings)
+    if keyless:
+        # Not a warning about the *number* of requests -- about the columns that
+        # simply are not in a public response. Nothing errors; the tags just
+        # never appear, which is the kind of gap you find six months later.
+        log("no API key: " + "; ".join(sorted(KEYLESS_MISSING.values())))
+        if settings.get("allow_licenses"):
+            raise ValueError(
+                "allow_licenses is set, but the public endpoint does not return "
+                "a rule's license, so every rule would be skipped and the mirror "
+                "would come out empty. Set RULEZET_API_KEY, or clear "
+                "allow_licenses to mirror everything."
+            )
+
     paths["root"].mkdir(parents=True, exist_ok=True)
     state = {} if (full or meta_only) else mirror.read_state(paths)
 

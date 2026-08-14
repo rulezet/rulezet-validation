@@ -53,3 +53,20 @@ def test_tags_stay_in_rulezet_vocabulary():
 
 def test_a_rule_matching_nothing_gets_no_tags():
     assert platform_tags({"title": "x", "description": "y"}, CFGS) == []
+
+
+def test_keyless_rows_cannot_produce_vulnerability_tags():
+    """The public endpoint omits cve_id entirely, so there is nothing to read.
+
+    Not a defect to fix here -- a fact to surface. `sync` says so out loud.
+    """
+    keyless_row = {
+        "uuid": "u1",
+        "title": "Log4Shell_Detector",
+        "description": "detects exploitation attempts",
+        "content": "rule x { condition: true }",
+        "author": "someone",
+        "creation_date": "2024-01-01",
+        "format": "yara",
+    }
+    assert vulns(keyless_row) == []

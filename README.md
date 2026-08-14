@@ -41,10 +41,37 @@ rulezet-validate mirror status
 rulezet-validate scan ./suspicious.elf
 ```
 
-A full keyless sync is ~1300 paged requests. With an API key
-(`RULEZET_API_KEY`) it becomes a single `dumpRules` POST and later syncs are
-incremental. Every request this tool makes is a read; nothing is written back
-to rulezet.org.
+Every request this tool makes is a read; nothing is written back to
+rulezet.org.
+
+### What an API key changes
+
+More than speed. The public and private endpoints **do not return the same
+fields**, and the difference is silent — nothing errors, the columns are simply
+absent from the response:
+
+| | keyless (`searchPage`) | with `RULEZET_API_KEY` (`dumpRules`) |
+|---|---|---|
+| rule text, title, description, author | yes | yes |
+| `cve_id` → `cve:` / `ghsa:` / `pysec:` tags | **no** | yes |
+| `license` → `allow_licenses` filtering | **no** | yes |
+| `updated_at` → incremental sync | **no** | yes |
+| cost of a full mirror | ~1300 paged requests | one POST |
+
+So a keyless mirror gets tags from the title/description regex table only. `sync`
+says this out loud on every keyless run rather than leaving you to notice the
+missing tags months later, and it refuses to start if `allow_licenses` is set
+without a key — that combination would skip all 130k rules and report an empty
+mirror as success.
+
+The key is read from the environment, not from a `.env` file — no dependency is
+worth it for one variable. If you keep one, source it yourself:
+
+```sh
+set -a; . ./.env; set +a
+```
+
+`.env` is gitignored.
 
 ## Configuration
 

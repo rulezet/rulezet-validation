@@ -11,3 +11,7 @@ dist/
 .pytest_cache/
 .ruff_cache/
 rulezet-validation.toml
+
+# API keys. RULEZET_API_KEY belongs in the environment, never in the repo.
+.env
+.env.*
