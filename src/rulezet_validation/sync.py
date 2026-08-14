@@ -34,6 +34,16 @@ def sync(
         # simply are not in a public response. Nothing errors; the tags just
         # never appear, which is the kind of gap you find six months later.
         log("no API key: " + "; ".join(sorted(KEYLESS_MISSING.values())))
+        if meta_only:
+            # Not refused: deleting the cached regex table and re-deriving tags
+            # from a newer one is a real reason to run this keyless. But the
+            # fields people usually reach for --meta-only to backfill are
+            # exactly the ones a public response does not carry, and a keyless
+            # run costs the full ~1300-request crawl to change nothing.
+            log(
+                "  --meta-only keyless re-derives tags from the local regex "
+                "table only; the fields above stay absent"
+            )
         if settings.get("allow_licenses"):
             raise ValueError(
                 "allow_licenses is set, but the public endpoint does not return "

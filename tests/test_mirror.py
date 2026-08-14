@@ -105,3 +105,22 @@ def test_license_filter_refuses_to_run_keyless(tmp_path, monkeypatch):
     s = _settings(tmp_path, allow_licenses=["cc0 1.0"], api_key="")
     with pytest.raises(ValueError, match="allow_licenses"):
         sync(s, config.paths(s), log=lambda *_: None)
+
+
+def test_meta_only_leaves_rule_files_alone(tmp_path):
+    """The backfill updates metadata; it must not rewrite or drop the mirror."""
+    p = _paths(tmp_path)
+    p["quarantine"].mkdir(parents=True, exist_ok=True)
+    mirror.write_rules([_rule()], [], p, _settings(tmp_path), log=lambda *_: None)
+    before = (p["rules"] / "u1.yara").read_text()
+
+    _tags, rows = mirror.write_rules(
+        [_rule(to_string="rule replaced { condition: true }")],
+        [],
+        p,
+        _settings(tmp_path),
+        log=lambda *_: None,
+        write_files=False,
+    )
+    assert (p["rules"] / "u1.yara").read_text() == before
+    assert rows["u1"]["uuid"] == "u1"

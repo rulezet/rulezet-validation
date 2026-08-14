@@ -73,6 +73,32 @@ set -a; . ./.env; set +a
 
 `.env` is gitignored.
 
+### Backfilling an existing mirror
+
+Already synced without a key? Add one, then:
+
+```sh
+export RULEZET_API_KEY=...
+rulezet-validate mirror sync --meta-only
+```
+
+`--meta-only` refetches every rule, updates the tag sidecar and metadata, and
+touches neither the rule files nor any quarantine decision. It ignores the
+last-sync date by definition — the rules it is describing are the old ones.
+
+Two limits:
+
+- Tags are only ever **added**, never removed. Delete `tags.json` first if you
+  want a clean rebuild.
+- It cannot enforce a newly set `allow_licenses`: disallowed rules drop out of
+  the sidecar, but their `.yara` files stay on disk. Use `mirror sync --full`
+  when the licence policy itself changes.
+
+Running it keyless is close to pointless — the fields it exists to backfill are
+the ones a public response omits — so it says so and gets on with it. The one
+real use is re-deriving tags after deleting the cached
+`platform_tag_configs.json` to pick up a newer upstream table.
+
 ## Configuration
 
 Optional. First hit wins: `$RULEZET_CONFIG`, `./rulezet-validation.toml`,
