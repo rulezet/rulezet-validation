@@ -6,13 +6,11 @@ the evidence recorded.
 
 ## Install
 
-Not on PyPI.
-
 ```sh
-pip install git+https://github.com/rdmmf/rulezet-validation
+pip install git+https://github.com/rulezet/rulezet-validation
 
 # or from a clone
-git clone https://github.com/rdmmf/rulezet-validation
+git clone https://github.com/rulezet/rulezet-validation
 cd rulezet-validation && pip install .      # uv pip install . works the same
 
 # development
