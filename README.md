@@ -27,8 +27,25 @@ something to be declared and versioned rather than assumed.
 
 ## Install
 
+Not published to PyPI. Install from the repository:
+
 ```sh
-pip install rulezet-validation      # or: uv tool install rulezet-validation
+pip install git+https://github.com/rdmmf/rulezet-validation
+```
+
+Or from a clone:
+
+```sh
+git clone https://github.com/rdmmf/rulezet-validation
+cd rulezet-validation
+pip install .            # uv pip install .   works the same
+```
+
+For development, editable with the test extras:
+
+```sh
+pip install -e ".[dev]"
+pytest
 ```
 
 One dependency (`yara-python`). No database, no services. State is files.
