@@ -163,3 +163,20 @@ def test_nothing_new_is_not_an_error(monkeypatch):
 
     monkeypatch.setattr(source, "_post", not_found)
     assert source.fetch_rules({"api_key": "ok"}, log=lambda *_: None) == []
+
+
+def test_every_setting_has_an_environment_equivalent():
+    """The README claims this. Keep it true."""
+    from rulezet_validation import config
+
+    assert set(config.DEFAULTS) == set(config.ENV.values())
+
+
+def test_boolean_and_list_settings_coerce_from_the_environment(monkeypatch):
+    from rulezet_validation import config
+
+    monkeypatch.setenv("RULEZET_BASELINE_PROBES", "false")
+    monkeypatch.setenv("RULEZET_ALLOW_LICENSES", "cc0 1.0:cc by 4.0")
+    s = config.load()
+    assert s["baseline_probes"] is False
+    assert s["allow_licenses"] == ["cc0 1.0", "cc by 4.0"]

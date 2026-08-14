@@ -1,344 +1,255 @@
 # rulezet-validation
 
-Mirror [rulezet.org](https://rulezet.org)'s YARA rules and validate them against
-known-clean binaries.
-
-Two halves that share a directory layout and nothing else:
-
-- **mirror** — fetch ~130k rules, tag them in Rulezet's own MISP-style
-  vocabulary, compile them, and gate them against a clean-binary baseline.
-- **validate** — judge a rule on its own merits, with no mirror involved.
-  *(landing next; see [Status](#status))*
-
-## Why
-
-A ruleset of 130k unreviewed bulk imports contains rules that fire on ordinary
-software. Some of those hits are correct — a capability rule saying "this binary
-speaks SMTP" is *right* about busybox, which ships a sendmail applet. Others are
-not: Elastic's `Linux_Generic_Threat_d94e1020` matches uClibc's `fcntl` syscall
-wrapper, so it fires on any binary statically linked against that libc.
-
-Telling those apart needs a baseline corpus that actually covers what the rules
-target. A baseline of `/usr/bin` is x86-64 dynamic glibc, and it cannot judge a
-rule that fingerprints statically linked embedded libc — the rule passes the
-gate and then matches every uClibc binary in the world. So this ships small
-uClibc probes as part of the default baseline, and treats the corpus itself as
-something to be declared and versioned rather than assumed.
+Mirror [rulezet.org](https://rulezet.org)'s YARA rules and scan them against
+known-clean binaries. Any rule that fires on clean software is quarantined, with
+the evidence recorded.
 
 ## Install
 
-Not published to PyPI. Install from the repository:
+Not on PyPI.
 
 ```sh
 pip install git+https://github.com/rdmmf/rulezet-validation
-```
 
-Or from a clone:
-
-```sh
+# or from a clone
 git clone https://github.com/rdmmf/rulezet-validation
-cd rulezet-validation
-pip install .            # uv pip install .   works the same
+cd rulezet-validation && pip install .      # uv pip install . works the same
+
+# development
+pip install -e ".[dev]" && pytest
 ```
 
-For development, editable with the test extras:
+One dependency: `yara-python`. No database, no services. State is files.
+
+## CLI
 
 ```sh
-pip install -e ".[dev]"
-pytest
-```
-
-One dependency (`yara-python`). No database, no services. State is files.
-
-## Quickstart
-
-```sh
-rulezet-validate sync --limit 500          # trial run, no API key needed
+rulezet-validate sync                  # fetch, compile, gate
 rulezet-validate mirror status
-rulezet-validate scan ./suspicious.elf
 ```
 
-`sync` is a shortcut for `mirror sync`; every other mirror command lives under
-`mirror`.
+| command | does |
+|---|---|
+| `sync` | shortcut for `mirror sync` |
+| `mirror sync` | fetch rules, compile, run the gate |
+| `mirror check` | re-scan the baseline, report only, move nothing |
+| `mirror recheck` | put quarantined rules back on trial |
+| `mirror compile` | recompile the mirror |
+| `mirror status` | key, counts, last sync, stale verdicts |
+| `scan BINARY` | what fires on one file |
+| `baseline list` | files the gate will scan |
 
-Rules are mirrored byte-for-byte and never rewritten. Some of them call YARA's
-`console` module, which prints straight to stdout from the C library — and
-because `console.log()` returns true, it is chained into conditions with `and`,
-so it fires while the condition is *evaluated*, not only when it matches. Across
-a 300-file baseline that buries the result under lines like `The SHA256 Hash :
-e0d411...`. Those are captured and reduced to a count. The rules themselves are
-untouched; only where their output goes changes.
-
-Every request this tool makes is a read; nothing is written back to
-rulezet.org.
-
-### What an API key changes
-
-More than speed. The public and private endpoints **do not return the same
-fields**, and the difference is silent — nothing errors, the columns are simply
-absent from the response:
-
-| | keyless (`searchPage`) | with `RULEZET_API_KEY` (`dumpRules`) |
+| flag | on | does |
 |---|---|---|
-| rule text, title, description, author | yes | yes |
-| `cve_id` → `cve:` / `ghsa:` / `pysec:` tags | **no** | yes |
-| `license` → `allow_licenses` filtering | **no** | yes |
-| `updated_at` → incremental sync | **no** | yes |
-| cost of a full mirror | ~1300 paged requests | one POST |
+| `--limit N` | `sync` | stop after N rules. Ignores the API key — the bulk endpoint cannot fetch a subset |
+| `--dump` | `sync` | use the key anyway with `--limit`; downloads everything, then truncates |
+| `--full` | `sync` | ignore the last-sync date |
+| `--meta-only` | `sync` | refresh metadata only, leave rule files alone |
+| `--all` | `mirror recheck` | re-evaluate every quarantined rule, not only stale ones |
+| `--mirror-dir` | any | override the mirror location |
+| `--config` | any | path to a config TOML |
 
-So a keyless mirror gets tags from the title/description regex table only. `sync`
-says this out loud on every keyless run rather than leaving you to notice the
-missing tags months later, and it refuses to start if `allow_licenses` is set
-without a key — that combination would skip all 130k rules and report an empty
-mirror as success.
-
-A `.env` in the working directory is read automatically (or `$RULEZET_ENV`),
-so this is enough:
-
-```sh
-echo 'RULEZET_API_KEY="..."' > .env
-rulezet-validate sync
-```
-
-No `export`, no `set -a`. `export` prefixes and quoted values are handled;
-an inline `#` is *not* treated as a comment, because silently truncating a
-credential is a worse failure than not supporting trailing comments.
-
-Precedence, strongest first: environment, `.env`, config file, defaults — so a
-one-shot `RULEZET_API_KEY=... rulezet-validate sync` still overrides the file.
-`.env` is gitignored.
-
-`rulezet-validate mirror status` reports whether a key actually reached the
-process, by length rather than value:
-
-```
-api key     set (43 chars)
-api key     not set  no cve:/ghsa:/pysec: tags; no incremental sync; ...
-```
-
-Note that `--limit` deliberately ignores the key. `dumpRules` has no size
-parameter: it would download all ~130k rules (128 MB) and then discard all but
-the ones you asked for, so a trial run pages the public endpoint instead, which
-really does stop early. The trade-off is that the sample lacks the key-only
-fields.
-
-Drop `--limit` for a real sync, or pass `--dump` to use the key anyway and pay
-the full download for a small, fully-tagged sample.
-
-### Backfilling an existing mirror
-
-Already synced without a key? Add one, then:
-
-```sh
-export RULEZET_API_KEY=...
-rulezet-validate mirror sync --meta-only
-```
-
-`--meta-only` refetches every rule, updates the tag sidecar and metadata, and
-touches neither the rule files nor any quarantine decision. It ignores the
-last-sync date by definition — the rules it is describing are the old ones.
-
-Two limits:
-
-- Tags are only ever **added**, never removed. Delete `tags.json` first if you
-  want a clean rebuild.
-- It cannot enforce a newly set `allow_licenses`: disallowed rules drop out of
-  the sidecar, but their `.yara` files stay on disk. Use `mirror sync --full`
-  when the licence policy itself changes.
-
-Running it keyless is close to pointless — the fields it exists to backfill are
-the ones a public response omits — so it says so and gets on with it. The one
-real use is re-deriving tags after deleting the cached
-`platform_tag_configs.json` to pick up a newer upstream table.
+`RULEZET_API_KEY` unlocks the bulk endpoint and incremental syncs. Read from the
+environment or a `.env` in the working directory. `mirror status` reports
+whether it reached the process.
 
 ## Configuration
 
 Optional. First hit wins: `$RULEZET_CONFIG`, `./rulezet-validation.toml`,
-`~/.config/rulezet-validation/config.toml`. Environment always beats the file.
+`~/.config/rulezet-validation/config.toml`.
+
+Precedence, strongest first: environment, `.env`, config file, defaults.
 
 ```toml
 mirror_dir = "data/rulezet"
+released_file = "released.txt"
 baseline_dirs = ["/usr/bin"]
 baseline_max_files = 300
 baseline_probes = true
-baseline_exclude = ["capa*", "die", "yara*"]   # see below
-released_file = "released.txt"
-allow_licenses = []          # e.g. ["cc0 1.0", "cc by 4.0"]; empty keeps all
+baseline_exclude = []
+baseline_exclude_defaults = true
+allow_licenses = []          # e.g. ["cc0 1.0"]; empty keeps all. Needs an API key
 ```
 
-### Excluding files from the corpus
+Every setting has an environment equivalent:
 
-Some perfectly legitimate software carries malicious content on purpose.
-Reverse-engineering tools — DIE, capa, yara itself — ship malware signatures and
-sample strings, so a rule firing on them is the rule *working*. Leaving them in
-the baseline quarantines good rules.
+| setting | variable |
+|---|---|
+| `mirror_dir` | `RULEZET_DIR` |
+| `released_file` | `RULEZET_RELEASED_FILE` |
+| `baseline_dirs` | `RULEZET_BASELINE_DIRS` |
+| `baseline_max_files` | `RULEZET_BASELINE_MAX_FILES` |
+| `baseline_probes` | `RULEZET_BASELINE_PROBES` |
+| `baseline_exclude` | `RULEZET_BASELINE_EXCLUDE` |
+| `baseline_exclude_defaults` | `RULEZET_BASELINE_EXCLUDE_DEFAULTS` |
+| `allow_licenses` | `RULEZET_ALLOW_LICENSES` |
+| `url` | `RULEZET_URL` |
+| `api_key` | `RULEZET_API_KEY` |
 
-Exclusions come from two layers:
+List values are separated like `PATH` (`:` on Linux); booleans accept
+`1/true/yes/on`.
 
-- **Shipped** — `baseline/exclude.txt` in the package. Versioned, commented with
-  a reason per entry, and open to pull requests. It is shipped rather than left
-  to each user because the reasoning is universal: capa embeds its own rule set
-  on everyone's machine, so every user would otherwise rediscover it by having
-  a good rule quarantined.
-- **Local** — `baseline_exclude` in your config, additive:
+## The baseline
 
-  ```toml
-  baseline_exclude = ["/opt/ghidra/*", "our-internal-scanner"]
-  baseline_exclude_defaults = true    # false ignores the shipped list
-  ```
+What counts as known-clean. Three inputs:
 
-Patterns are fnmatch, tested against both the bare filename and the full path.
-Every exclusion is logged and both the patterns and the excluded filenames are
-recorded in the verdict — shipping defaults must not make them invisible.
+| source | default |
+|---|---|
+| bundled uClibc ARM probes | on (`baseline_probes`) |
+| directories you list | `["/usr/bin"]` |
+| shipped exclusion list | on (`baseline_exclude_defaults`) |
 
-The bar for adding to the shipped list is "this file carries attack content or
-detection signatures as part of doing its job", not "it matched a rule". binutils
-matches plenty of rules and is deliberately **not** excluded: a rule that reads
-an architecture table as a malware indicator is wrong, and excluding `objdump`
-would have hidden `ELF_Mirai` firing on 21 of 65 clean uClibc binaries.
-
-### How the corpus is sampled
-
-`baseline_max_files` caps the scan, and the files are taken at an even stride
-across the sorted directory rather than as a prefix. A prefix of `/usr/bin` is
-everything from `[` to `cmp` — 300 files sharing a first letter are not a sample
-of 3300, and a rule firing only on `zsh` would pass. The stride is deterministic,
-so verdicts stay reproducible, and the exact file list is recorded regardless.
-
-Symlinks are skipped rather than followed: `/usr/bin` is full of them
-(`msfvenom`, `upx`, `r2` all point into `/etc/alternatives`), and following them
-scans the same binary twice under two names.
-
-## The evidence a verdict carries
-
-`quarantine.json` records what was measured, not a summary of it:
-
-```json
-"matched": [
-  {
-    "file": "a.bin",
-    "path": "/usr/bin/a.bin",
-    "sha256": "76b81057ba9e752c8faa4eb7fa873cc7094007259a8730eab78ca5f3853bb537",
-    "strings": ["$mz", "$w"],
-    "offsets": ["0x0", "0x3"],
-    "offsets_total": 2,
-    "offsets_truncated": false
-  }
-]
-```
-
-Every matching file, with its hash and the addresses it matched at — not three
-examples. "and 297 others" is not something a reviewer can check.
-
-Paths are written to be published. A verdict gets pasted into an issue or
-attached to a pull request arguing a rule is wrong, so two kinds of path are
-rewritten: bundled probes become `<probes>/name`, since their real location is
-wherever pip installed the package, and anything under `$HOME` becomes `~/...`,
-since a username is not evidence. System paths stay verbatim — `/usr/bin/zsh`
-means the same thing on the reader's machine as it did on yours, which is the
-whole point of recording it.
-
-The `baseline` block lists every file in the corpus with its sha256 and size,
-so "fired on 300 clean binaries" becomes a reproducible claim: fetch the same
-files, verify the hashes, re-run the gate. `baseline.signature` is a sha256 over
-those hashes, which means a binary edited in place — same name, same length — is
-detected as `baseline_changed`.
-
-Offsets are capped at 64 per file per rule, with `offsets_truncated` saying so;
-one pathological rule matching a two-byte string should not write a megabyte
-into the record.
-
-## The quarantine criterion
-
-> A rule is quarantined **if and only if** it matched at least one file in the
-> baseline corpus, and its uuid is not in `released.txt`.
-
-That is the whole rule. It is an observation, not a judgement — nothing inspects
-a rule's quality, metadata, or author's intent, and no lint finding or risk
-score ever moves a file.
-
-Because a clean-binary hit is not automatically a defect, review is expected.
-Put the uuid in `released.txt` when the hit was legitimate; it is honoured on
-every later run, so a decision is never re-litigated. Explain the decision in
-the commit message that adds the line — that is the audit trail.
-
-Quarantined rules are **moved, not deleted**. `rules/` and `quarantine/` are
-both real directories you can compile, copy, or hand to another project.
-
-### A quarantine is a measurement, not a sentence
-
-A verdict is only true of the rule text it judged and the corpus it judged
-against. Both move. So each entry in `quarantine.json` records a hash of the
-rule and a signature of the baseline, and a decision goes **stale** when either
-changes:
-
-- `rule_changed` — upstream fixed it; the verdict describes bytes that no
-  longer exist.
-- `baseline_changed` — a probe was added, a corpus swapped. The rule was judged
-  against a different world.
-- `unverifiable` — quarantined before hashes were recorded, so nothing can
-  claim the verdict still holds.
+`baseline_max_files` caps the scan. Files are taken at an even stride across the
+sorted directory, not as a prefix — 300 files from the start of `/usr/bin` are
+all `[` to `cmp`. Symlinks are skipped, not followed.
 
 ```sh
-rulezet-validate mirror status     # reports how many are stale, and why
-rulezet-validate mirror recheck    # put the stale ones back on trial
-rulezet-validate mirror recheck --all
+rulezet-validate baseline list      # exactly what will be scanned
 ```
 
-`recheck` returns the selected rules to `rules/`, recompiles, and re-runs the
-gate: whatever still fires goes back to quarantine with a fresh verdict,
-whatever doesn't simply stays. `first_seen` survives, so history isn't rewritten
-by a retry, and `released.txt` is untouched — a human decision is not something
-a re-run gets to overturn.
+### Excluding files
 
-This is never automatic. A sync reports staleness and stops, because silently
-reopening a reviewed decision is its own kind of wrong.
+Reverse-engineering tools ship malware signatures on purpose. A rule firing on
+`capa` or `die` is working, not failing, and leaving them in quarantines good
+rules.
 
-Sync keeps quarantined rules' text current, writing updates into `quarantine/`
-rather than readmitting them. Skipping them instead — the obvious option — would
-pin each rule at the version that got it quarantined, so an upstream fix could
-never arrive and staleness could never be detected.
+- **Shipped**: `src/rulezet_validation/baseline/exclude.txt` — capa, DIE, yara,
+  ClamAV, radare2, metasploit, UPX, binwalk. Versioned, one reason per entry,
+  open to pull requests.
+- **Local**: `baseline_exclude`, additive. fnmatch patterns, tested against both
+  the bare filename and the full path.
+
+```toml
+baseline_exclude = ["/opt/ghidra/*", "our-internal-scanner"]
+baseline_exclude_defaults = false    # ignore the shipped list entirely
+```
+
+Both the patterns and the excluded filenames are recorded in every verdict.
+
+binutils is deliberately **not** excluded: `objdump` and friends match plenty of
+rules because they list every architecture they support, and a rule that reads
+an architecture table as a malware indicator is wrong.
+
+### Including more
+
+Add directories to `baseline_dirs`, and raise `baseline_max_files` — a
+`/usr/bin` of 3300 files is capped at 300 by default.
+
+```toml
+baseline_dirs = ["/usr/bin", "/usr/sbin", "/opt/vendor-firmware/bin"]
+baseline_max_files = 1500
+```
 
 ## Mirror layout
+
+Default `data/rulezet/`, set by `mirror_dir`. Build output: gitignored, safe to
+delete, regenerated by `sync`. The directory writes its own `.gitignore`.
 
 ```
 data/rulezet/
   rules/<uuid>.yara       one file per rule; the uuid is the yara namespace
   quarantine/<uuid>.yara  fired on the baseline
   rules.compiled          saved yara ruleset
-  tags.json               {uuid: [misp-style tag, ...]}
-  quarantine.json         machine-readable record, merged across runs
-  quarantine.txt          same data, for eyes
-  state.json              last_sync + the baseline the decisions were made with
-  .gitignore              written on sync: the mirror ignores itself
+  tags.json               {uuid: [tag, ...]}
+  quarantine.json         the verdicts and their evidence   <-- what you want
+  quarantine.txt          same, as a TSV index
+  state.json              last sync + the baseline in use
+  .gitignore              written on sync
 ```
 
-`released.txt` deliberately lives **outside** the mirror, next to your config
-(`released_file`, default `./released.txt`). Everything under `mirror_dir` is
-regenerable build output — gitignored, safe to `rm -rf`. `released.txt` is
-neither: it is hand-written, it is the only durable record of a human decision,
-and its history belongs in version control. It cannot be both ignored and
-committed, so it is not stored with the things that are ignored. The old
-in-mirror location is still read, so upgrading loses nothing.
+`released.txt` lives **outside** the mirror (`released_file`, default
+`./released.txt`). It is hand-written and meant to be committed; everything in
+the mirror is disposable.
 
-### What is and is not gitignored
-
-| | |
+| file | gitignored |
 |---|---|
-| `data/` (default `mirror_dir`) | ignored by the repo's `.gitignore` |
-| any other `mirror_dir` | ignores itself — `sync` writes a `.gitignore` of `*` into it |
-| `released.txt` | **not** ignored. Commit it; that is the audit trail |
-| `.env`, `rulezet-validation.toml` | ignored |
+| `data/` and any other `mirror_dir` | yes |
+| `released.txt` | no — commit it |
+| `.env`, `rulezet-validation.toml` | yes |
 
-One thing to know before wiping a mirror: `quarantine.json` holds `first_seen`
-for every verdict, and that history is not regenerable. The rules and the
-compiled ruleset are.
+## quarantine.json
 
-Tags stay in Rulezet's vocabulary (`ms-caro-malware-full:malware-type="Ransom"`,
-`cve:CVE-2021-44228`). Mapping them into some other taxonomy is the consumer's
-job, not this library's.
+A rule is quarantined **if and only if** it fired on the baseline and its uuid
+is not in `released.txt`. Nothing else moves a file.
 
-Nothing under `data/` is source. Regenerate it; never commit it.
+```json
+{
+  "baseline": {
+    "count": 302,
+    "signature": "742ff72ca0128ad4cfbe700e300b1cc55dd7bc17f82944d966ca41b37e34377b",
+    "dirs": ["/usr/bin"],
+    "exclude_patterns": ["capa*", "die"],
+    "excluded_files": ["capa", "die", "diec"],
+    "files": [
+      {"name": "zsh", "path": "/usr/bin/zsh", "sha256": "…", "size": 968936}
+    ]
+  },
+  "quarantined": {
+    "adca4692-e22e-4952-a6b1-0baaa1e91ede": {
+      "rule": "Linux_Generic_Threat_d94e1020",
+      "status": "quarantined",
+      "reason": "baseline_hit",
+      "hits": 2,
+      "first_seen": "2026-08-14T08:57:05Z",
+      "last_checked": "2026-08-14T08:57:05Z",
+      "rule_sha256": "a5b92da6a313f57d4e425da01f8f1d483f5d1181af7fbd06ebb1bff3b5c63c4f",
+      "baseline_signature": "742ff72ca0128ad4…",
+      "matched": [
+        {
+          "file": "clean_uclibc_fcntl.elf",
+          "path": "<probes>/clean_uclibc_fcntl.elf",
+          "sha256": "1794c4ad1d5872cfd2c1b3e81bb4d444df5b7c443f8310d6016fc2fe00e15d0c",
+          "strings": ["$a1"],
+          "offsets": ["0xd9d"],
+          "offsets_total": 1,
+          "offsets_truncated": false
+        }
+      ]
+    }
+  }
+}
+```
+
+| field | note |
+|---|---|
+| `matched` | every matching file, not a sample. Offsets capped at 64/file, flagged when truncated |
+| `path` | publish-safe: `$HOME` becomes `~/…`, bundled probes become `<probes>/…`, system paths kept verbatim |
+| `baseline.files` | the whole corpus with hashes, so the verdict is reproducible |
+| `status` | `quarantined` or `cleared` — history is kept, cleared entries stay |
+
+## Releasing a rule
+
+A clean-binary hit is not automatically a defect. `network_smtp_raw` firing on
+busybox is correct — busybox has a sendmail applet. Put the uuid in
+`released.txt` and it is honoured on every later run:
+
+```
+# reviewed: capability rule, MAIL FROM:/RCPT TO: on busybox is correct
+ea0359a9-7798-410c-b9cf-3b9cfd72bbc0
+```
+
+Explain the decision in the commit that adds the line.
+
+## Rechecking
+
+A verdict is only true of the rule text and corpus it was measured on. Both
+move, so verdicts go stale:
+
+| reason | means |
+|---|---|
+| `rule_changed` | upstream edited the rule |
+| `baseline_changed` | a probe, a corpus, or a binary changed |
+| `unverifiable` | quarantined before hashes were recorded |
+
+```sh
+rulezet-validate mirror status      # how many are stale, and why
+rulezet-validate mirror recheck     # stale ones
+rulezet-validate mirror recheck --all
+```
+
+Rules go back to `rules/`, get recompiled and re-gated. Whatever still fires
+returns to quarantine; whatever doesn't stays. Never automatic — a sync reports
+staleness and stops. `released.txt` and `first_seen` are untouched.
 
 ## Embedding
 
@@ -355,21 +266,15 @@ indexing rule provenance into a host application's own store.
 
 ## Status
 
-Working: mirror sync, tagging, compile, gate, quarantine records, CLI, tests.
+Working: sync, tagging, compile, gate, quarantine records, recheck, CLI.
 
-Next, in order:
+Next:
 
-1. `rulezet-validate check RULE.yar` — single-rule linter, no mirror required.
-   Static checks (glob collisions like `4 of ($arch*)` silently covering
-   `$archx*`; strings that alone satisfy a condition; weak strings) plus
-   empirical ones against the baseline.
-2. `baseline sync` — fetch the larger corpora declared in `baseline/manifest.toml`.
-3. `false-positive:risk` tags — emitted only where the baseline actually
-   exercises the rule, `cannot-be-judged` otherwise (which is most of a 130k
-   ruleset). `false-positive:confirmed` needs labelled malware analysis and is
-   deliberately not attempted yet.
+1. `rulezet-validate check RULE.yar` — single-rule linter, no mirror needed.
+2. `baseline sync` — fetch the corpora declared in `baseline/manifest.toml`.
+3. `false-positive:risk` tags, emitted only where the baseline exercises the rule.
 
 ## Licence
 
-AGPL-3.0. See [NOTICE](NOTICE) for the licensing of fetched and bundled
-artifacts, which is not the same thing.
+AGPL-3.0. See [NOTICE](NOTICE) for fetched and bundled artifacts, which are
+under their own terms.

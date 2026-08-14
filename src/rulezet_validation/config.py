@@ -71,6 +71,9 @@ ENV = {
     "RULEZET_BASELINE_MAX_FILES": "baseline_max_files",
     "RULEZET_BASELINE_EXCLUDE": "baseline_exclude",
     "RULEZET_RELEASED_FILE": "released_file",
+    "RULEZET_BASELINE_PROBES": "baseline_probes",
+    "RULEZET_BASELINE_EXCLUDE_DEFAULTS": "baseline_exclude_defaults",
+    "RULEZET_ALLOW_LICENSES": "allow_licenses",
 }
 
 
