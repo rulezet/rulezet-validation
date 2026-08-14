@@ -189,6 +189,14 @@ scans the same binary twice under two names.
 Every matching file, with its hash and the addresses it matched at — not three
 examples. "and 297 others" is not something a reviewer can check.
 
+Paths are written to be published. A verdict gets pasted into an issue or
+attached to a pull request arguing a rule is wrong, so two kinds of path are
+rewritten: bundled probes become `<probes>/name`, since their real location is
+wherever pip installed the package, and anything under `$HOME` becomes `~/...`,
+since a username is not evidence. System paths stay verbatim — `/usr/bin/zsh`
+means the same thing on the reader's machine as it did on yours, which is the
+whole point of recording it.
+
 The `baseline` block lists every file in the corpus with its sha256 and size,
 so "fired on 300 clean binaries" becomes a reproducible claim: fetch the same
 files, verify the hashes, re-run the gate. `baseline.signature` is a sha256 over

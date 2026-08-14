@@ -401,3 +401,33 @@ def test_sampling_is_deterministic(tmp_path):
         (d / f"{i:03d}.bin").write_bytes(b"\x7fELF\n")
     s, _ = _setup(tmp_path, baseline_dirs=[str(d)], baseline_max_files=7)
     assert gate.baseline_files(s) == gate.baseline_files(s)
+
+
+# --- what a published record may contain ------------------------------------
+
+
+def test_no_home_directory_leaks_into_the_record(tmp_path, monkeypatch):
+    """Verdicts get pasted into issues and pull requests. A username is not
+    evidence."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    raw = p["quarantine_json"].read_text()
+    assert str(tmp_path) not in raw
+    assert "~/" in raw
+
+
+def test_system_paths_are_kept_verbatim():
+    """/usr/bin/zsh means the same thing on the reader's machine."""
+    assert gate.display_path("/usr/bin/zsh") == "/usr/bin/zsh"
+
+
+def test_bundled_probes_get_a_stable_name():
+    """Their real location is wherever pip installed the package."""
+    probe = gate.PROBES / "clean_uclibc_fcntl.elf"
+    assert gate.display_path(probe) == "<probes>/clean_uclibc_fcntl.elf"
+
+
+def test_home_paths_are_abbreviated(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert gate.display_path(tmp_path / "corpus" / "a.bin") == "~/corpus/a.bin"

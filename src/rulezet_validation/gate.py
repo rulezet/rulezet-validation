@@ -72,6 +72,38 @@ class Counter:
             log(f"  {self.n} console messages from rules suppressed")
 
 
+def display_path(path):
+    """A path fit to be published in a verdict.
+
+    Quarantine records are evidence meant to be shared -- pasted into an issue,
+    attached to a pull request arguing a rule is wrong. Two kinds of path in
+    them are worse than useless to the reader:
+
+    * **Bundled probes.** Their absolute location is wherever pip happened to
+      install the package. Rendered as `<probes>/name`, which identifies the
+      file for everyone.
+    * **Anything under $HOME.** Leaks a username into a public record for no
+      analytical gain. Rendered with a `~` prefix.
+
+    System paths are kept verbatim: `/usr/bin/zsh` means the same thing on the
+    reader's machine as it did on yours, which is the whole point.
+    """
+    path = Path(path)
+    try:
+        return f"<probes>/{path.relative_to(PROBES)}"
+    except ValueError:
+        pass
+    try:
+        return f"~/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
+
+
+def hash_files(files):
+    """`{real path: sha256}`. One pass, so nothing is hashed twice."""
+    return {str(f): sha256(f) for f in files}
+
+
 def sha256(path):
     """Full hex sha256 of a file, or "" if it cannot be read.
 
@@ -84,13 +116,14 @@ def sha256(path):
         return ""
 
 
-def baseline_manifest(files):
+def baseline_manifest(files, digests=None):
     """`[{name, path, sha256, size}]` -- exactly what a verdict was measured on.
 
     Recorded in full rather than as a count, because "fired on 300 clean
     binaries" is not a reproducible claim. With this, anyone can fetch the same
     files, check the hashes, and re-run the gate.
     """
+    digests = hash_files(files) if digests is None else digests
     out = []
     for f in sorted(files, key=lambda p: (p.name, str(p))):
         try:
@@ -98,7 +131,12 @@ def baseline_manifest(files):
         except OSError:
             continue
         out.append(
-            {"name": f.name, "path": str(f), "sha256": sha256(f), "size": size}
+            {
+                "name": f.name,
+                "path": display_path(f),
+                "sha256": digests.get(str(f), ""),
+                "size": size,
+            }
         )
     return out
 
@@ -293,7 +331,7 @@ def scan_baseline(rules, files, log=print, digests=None):
                     offsets.append(i.offset)
             e["matched"][str(f)] = {
                 "file": f.name,
-                "path": str(f),
+                "path": display_path(f),
                 "sha256": digests[str(f)],
                 "strings": sorted(strings),
                 # A pathological rule can match a short string thousands of
@@ -396,10 +434,9 @@ def gate(rules, paths, settings, log=print):
     files, excluded = collect_baseline(settings)
     if excluded:
         log(f"  {len(excluded)} files excluded from the baseline")
-    manifest = baseline_manifest(files)
-    hits = scan_baseline(
-        rules, files, log=log, digests={e["path"]: e["sha256"] for e in manifest}
-    )
+    digests = hash_files(files)
+    manifest = baseline_manifest(files, digests)
+    hits = scan_baseline(rules, files, log=log, digests=digests)
 
     for uuid in read_released(paths):
         hits.pop(uuid, None)
@@ -429,7 +466,7 @@ def describe_baseline(files, settings, manifest=None, excluded=None):
     return {
         "count": len(manifest),
         "files": manifest,
-        "dirs": list(settings.get("baseline_dirs") or []),
+        "dirs": [display_path(d) for d in (settings.get("baseline_dirs") or [])],
         "exclude_patterns": exclude_patterns(settings),
         "excluded_files": sorted(f.name for f in (excluded or [])),
         "probes": bool(settings.get("baseline_probes", True)),
@@ -462,6 +499,7 @@ def stale(paths, settings):
         return {}
 
     sig = baseline_signature(baseline_manifest(baseline_files(settings)))
+
     out = {}
     for uuid, e in entries.items():
         f = paths["quarantine"] / f"{uuid}.yara"
