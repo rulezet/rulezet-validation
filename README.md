@@ -248,8 +248,8 @@ Next:
 
 1. `rulezet-validate check RULE.yar` — single-rule linter, no mirror needed.
 2. `baseline sync` — fetch the corpora declared in `baseline/manifest.toml`.
-3. Static checks (`RZ001`–`RZ006`) feeding the risk proposal, so a rule can be
-   judged on more than its hit count.
+3. Static checks feeding the risk proposal, so a rule can be judged on more
+   than its hit count.
 
 ## Licence
 
