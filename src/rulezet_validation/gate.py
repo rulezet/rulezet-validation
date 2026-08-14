@@ -45,6 +45,38 @@ OFFSET_CAP = 64
 # user's local config.
 DEFAULT_EXCLUDE = Path(__file__).resolve().parent / "baseline" / "exclude.txt"
 
+# Hits -> proposed risk. Absolute counts, not a fraction of the baseline: the
+# corpus is small enough that a percentage reads as more precision than there
+# is, and "fired on twenty clean binaries" is the sentence a reviewer actually
+# reasons with.
+# ponytail: flat thresholds, revisit if the baseline grows past a few thousand
+# files, at which point a fraction starts meaning more than a count.
+RISK_THRESHOLDS = ((20, "high"), (5, "medium"), (1, "low"))
+RISK_PREFIX = "false-positive:risk:"
+
+
+def propose_risk(hits):
+    """The risk level suggested by how much clean material a rule fired on.
+
+    A proposal, never a verdict: it is written next to the evidence and moves
+    nothing. Zero hits is `cannot-be-judged` rather than `low` -- a rule with no
+    observation behind it (a hand-moved file, a record from before the evidence
+    existed) has not been exercised, and saying "low" there would be inventing
+    a measurement that was never taken.
+    """
+    for floor, level in RISK_THRESHOLDS:
+        if hits >= floor:
+            return RISK_PREFIX + level
+    return RISK_PREFIX + "cannot-be-judged"
+
+
+def sidecar_tags(paths):
+    """`{uuid: [tag]}` from the tags sidecar, or `{}` if there is none yet."""
+    try:
+        return json.loads(paths["tags"].read_text())
+    except (ValueError, OSError, KeyError):
+        return {}
+
 
 class Counter:
     """Swallows output from YARA's `console` module, counting it.
@@ -400,8 +432,18 @@ def write_quarantine_files(hits, paths, baseline, log=print):
     # status "cleared", and the directory remains the source of truth for
     # what is quarantined right now.
     present = {f.stem for f in paths["quarantine"].glob("*.yara")}
+    upstream = sidecar_tags(paths)
     for uuid, e in entries.items():
         e["status"] = "quarantined" if uuid in present else "cleared"
+        # A suggestion for whoever reviews the quarantine, derived from the
+        # evidence in this same record. Where upstream already carries a risk
+        # tag, the proposal is still made -- an observed hit count outranks a
+        # tag derived from a rule's prose -- but the upstream value is kept
+        # beside it, because a disagreement between the two is worth seeing.
+        e["proposed_tag"] = propose_risk(e.get("hits", 0))
+        prior = [t for t in upstream.get(uuid, []) if t.startswith(RISK_PREFIX)]
+        if prior:
+            e["upstream_tag"] = prior[0]
 
     doc = {"generated": now, "baseline": baseline, "quarantined": entries}
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -413,14 +455,14 @@ def write_quarantine_files(hits, paths, baseline, log=print):
     lines = [
         f"# quarantined -- fired on {n_baseline} known-clean binaries",
         f"# baseline {baseline.get('signature', '')[:16]}",
-        "# uuid\trule\thits\tstatus\tfiles",
+        "# uuid\trule\thits\tstatus\tproposed risk\tfiles",
     ]
     for uuid, e in sorted(entries.items(), key=lambda kv: -kv[1].get("hits", 0)):
         names = [m["file"] for m in (e.get("matched") or [])]
         shown = ",".join(names[:5]) + (f",+{len(names) - 5}" if len(names) > 5 else "")
         lines.append(
             f"{uuid}\t{e.get('rule', '')}\t{e.get('hits', 0)} hits"
-            f"\t{e['status']}\t{shown}"
+            f"\t{e['status']}\t{e.get('proposed_tag', '')}\t{shown}"
         )
     paths["quarantine_log"].write_text("\n".join(lines) + "\n")
     log(f"  quarantine now holds {len(present)} rules")

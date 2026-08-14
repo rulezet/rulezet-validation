@@ -431,3 +431,35 @@ def test_bundled_probes_get_a_stable_name():
 def test_home_paths_are_abbreviated(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert gate.display_path(tmp_path / "corpus" / "a.bin") == "~/corpus/a.bin"
+
+
+# --- proposed risk tags ------------------------------------------------------
+
+
+def test_risk_proposal_ladder():
+    assert gate.propose_risk(20) == "false-positive:risk:high"
+    assert gate.propose_risk(19) == "false-positive:risk:medium"
+    assert gate.propose_risk(5) == "false-positive:risk:medium"
+    assert gate.propose_risk(1) == "false-positive:risk:low"
+
+
+def test_unexercised_rules_are_not_called_low_risk():
+    """No observation is not the same as a good observation."""
+    assert gate.propose_risk(0) == "false-positive:risk:cannot-be-judged"
+
+
+def test_quarantine_records_carry_a_proposal_and_the_upstream_tag(tmp_path):
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    entries = json.loads(p["quarantine_json"].read_text())["quarantined"]
+    assert entries, "fixture rule should have fired"
+    uuid, e = next(iter(entries.items()))
+    assert e["proposed_tag"] == gate.propose_risk(e["hits"])
+    assert "upstream_tag" not in e
+
+    p["tags"].parent.mkdir(parents=True, exist_ok=True)
+    p["tags"].write_text(json.dumps({uuid: ["false-positive:risk:low"]}))
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    e = json.loads(p["quarantine_json"].read_text())["quarantined"][uuid]
+    assert e["upstream_tag"] == "false-positive:risk:low"
+    assert e["proposed_tag"] == gate.propose_risk(e["hits"])

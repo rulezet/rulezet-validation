@@ -237,11 +237,19 @@ indexing rule provenance into a host application's own store.
 
 Working: sync, tagging, compile, gate, quarantine records, recheck, CLI.
 
+Each quarantine record carries a `proposed_tag` — `false-positive:risk:` `high`
+(20+ clean binaries hit), `medium` (5–19), `low` (1–4), or `cannot-be-judged`
+when there is no observation behind the record at all. It is a suggestion for
+the reviewer, not a verdict: nothing moves on it, and a risk tag already
+present upstream is recorded next to it as `upstream_tag` rather than
+overwriting or being overwritten.
+
 Next:
 
 1. `rulezet-validate check RULE.yar` — single-rule linter, no mirror needed.
 2. `baseline sync` — fetch the corpora declared in `baseline/manifest.toml`.
-3. `false-positive:risk` tags, emitted only where the baseline exercises the rule.
+3. Static checks (`RZ001`–`RZ006`) feeding the risk proposal, so a rule can be
+   judged on more than its hit count.
 
 ## Licence
 

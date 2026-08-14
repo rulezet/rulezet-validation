@@ -180,3 +180,11 @@ def test_boolean_and_list_settings_coerce_from_the_environment(monkeypatch):
     s = config.load()
     assert s["baseline_probes"] is False
     assert s["allow_licenses"] == ["cc0 1.0", "cc by 4.0"]
+
+
+def test_upstream_risk_tags_survive_the_mirror():
+    """Rulezet does not emit these yet; when it does they must not be dropped."""
+    tags = platform_tags(
+        {"title": "x", "tags": ["false-positive:risk:high", "sector:finance"]}, CFGS
+    )
+    assert tags == ["false-positive:risk:high"]

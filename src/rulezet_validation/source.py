@@ -224,6 +224,17 @@ def platform_tags(rule, tag_config):
     ship in the rule row, and Rulezet's own title/description regex table.
     """
     tags = [f"{v.split('-')[0].lower()}:{v}" for v in vulns(rule)]
+    # Rulezet does not tag false-positive risk yet, and no endpoint returns
+    # tags at all -- but the column is coming, and a rule row that carries one
+    # should not lose it on the way into the mirror. Only this one family is
+    # taken: anything else arriving under `tags` belongs to a vocabulary this
+    # module does not claim to understand.
+    raw = rule.get("tags") or []
+    tags += [
+        t
+        for t in (raw if isinstance(raw, list) else [raw])
+        if isinstance(t, str) and t.startswith("false-positive:risk:")
+    ]
     # Underscores become spaces first. Rulezet's regexes are `\b`-anchored and
     # written for prose descriptions, but a mirrored rule's *title* is almost
     # always underscore-joined (`Win32_Ransomware_LockBit`) -- and `_` is a word
