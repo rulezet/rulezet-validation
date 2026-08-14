@@ -36,6 +36,12 @@ DEFAULTS = {
     "baseline_dirs": ["/usr/bin"],
     # Cap on baseline files, so a gate run stays minutes rather than hours.
     "baseline_max_files": 300,
+    # fnmatch patterns for files that must not count as known-clean, tested
+    # against both the bare filename and the full path. Reverse-engineering
+    # tools ship malware signatures and sample strings on purpose -- a rule
+    # firing on `die` or `capa` is working, not failing, and leaving them in
+    # the corpus would quarantine good rules.
+    "baseline_exclude": [],
     # Include the bundled uClibc probes in the baseline. Turning this off
     # re-opens the static-embedded-libc blind spot; see README.
     "baseline_probes": True,
@@ -55,6 +61,7 @@ ENV = {
     "RULEZET_DIR": "mirror_dir",
     "RULEZET_BASELINE_DIRS": "baseline_dirs",
     "RULEZET_BASELINE_MAX_FILES": "baseline_max_files",
+    "RULEZET_BASELINE_EXCLUDE": "baseline_exclude",
     "RULEZET_RELEASED_FILE": "released_file",
 }
 

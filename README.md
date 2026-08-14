@@ -120,8 +120,58 @@ mirror_dir = "data/rulezet"
 baseline_dirs = ["/usr/bin"]
 baseline_max_files = 300
 baseline_probes = true
+baseline_exclude = ["capa*", "die", "yara*"]   # see below
+released_file = "released.txt"
 allow_licenses = []          # e.g. ["cc0 1.0", "cc by 4.0"]; empty keeps all
 ```
+
+### Excluding files from the corpus
+
+Some perfectly legitimate software carries malicious content on purpose.
+Reverse-engineering tools — DIE, capa, yara itself — ship malware signatures and
+sample strings, so a rule firing on them is the rule *working*. Leaving them in
+the baseline quarantines good rules.
+
+`baseline_exclude` takes fnmatch patterns, tested against both the bare filename
+and the full path:
+
+```toml
+baseline_exclude = ["capa*", "die", "/opt/ghidra/*"]
+```
+
+The list is recorded in every verdict, because a decision reached by ignoring
+part of the corpus has to say so.
+
+## The evidence a verdict carries
+
+`quarantine.json` records what was measured, not a summary of it:
+
+```json
+"matched": [
+  {
+    "file": "a.bin",
+    "path": "/usr/bin/a.bin",
+    "sha256": "76b81057ba9e752c8faa4eb7fa873cc7094007259a8730eab78ca5f3853bb537",
+    "strings": ["$mz", "$w"],
+    "offsets": ["0x0", "0x3"],
+    "offsets_total": 2,
+    "offsets_truncated": false
+  }
+]
+```
+
+Every matching file, with its hash and the addresses it matched at — not three
+examples. "and 297 others" is not something a reviewer can check.
+
+The `baseline` block lists every file in the corpus with its sha256 and size,
+so "fired on 300 clean binaries" becomes a reproducible claim: fetch the same
+files, verify the hashes, re-run the gate. `baseline.signature` is a sha256 over
+those hashes, which means a binary edited in place — same name, same length — is
+detected as `baseline_changed`.
+
+Offsets are capped at 64 per file per rule, with `offsets_truncated` saying so;
+one pathological rule matching a two-byte string should not write a megabyte
+into the record.
 
 ## The quarantine criterion
 

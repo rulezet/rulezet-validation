@@ -28,6 +28,7 @@ stops there, because silently reopening a reviewed decision is its own kind of
 wrong.
 """
 
+import fnmatch
 import hashlib
 import json
 import shutil
@@ -35,6 +36,10 @@ import time
 from pathlib import Path
 
 PROBES = Path(__file__).resolve().parent / "baseline" / "probes"
+
+# Per file, per rule. Enough to see the pattern; short of letting one
+# pathological rule write a megabyte into quarantine.json.
+OFFSET_CAP = 64
 
 
 class Counter:
@@ -63,29 +68,48 @@ class Counter:
             log(f"  {self.n} console messages from rules suppressed")
 
 
-def rule_digest(path):
-    """Hash of a rule file, so a verdict can name the bytes it was about."""
+def sha256(path):
+    """Full hex sha256 of a file, or "" if it cannot be read.
+
+    Full, not truncated. A field called `sha256` holding sixteen characters is
+    a lie, and these hashes exist so a verdict can be re-verified later.
+    """
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+        return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return ""
 
 
-def baseline_signature(files):
-    """Cheap identity for a corpus: which files, and how big.
+def baseline_manifest(files):
+    """`[{name, path, sha256, size}]` -- exactly what a verdict was measured on.
 
-    Deliberately not a content hash of every binary -- this is checked on every
-    status call, and name+size already catches the changes that matter (a probe
-    added, a corpus swapped, a distro upgraded). It will not notice a file
-    edited in place at identical length; `recheck --all` is the answer there.
+    Recorded in full rather than as a count, because "fired on 300 clean
+    binaries" is not a reproducible claim. With this, anyone can fetch the same
+    files, check the hashes, and re-run the gate.
     """
-    h = hashlib.sha256()
-    for f in sorted(files, key=lambda p: p.name):
+    out = []
+    for f in sorted(files, key=lambda p: (p.name, str(p))):
         try:
-            h.update(f"{f.name}:{f.stat().st_size}\n".encode())
+            size = f.stat().st_size
         except OSError:
             continue
-    return h.hexdigest()[:16]
+        out.append(
+            {"name": f.name, "path": str(f), "sha256": sha256(f), "size": size}
+        )
+    return out
+
+
+def baseline_signature(manifest):
+    """One id for a whole corpus: sha256 over its files' names and hashes.
+
+    Content-based, so a binary edited in place at the same length still changes
+    it. That costs a hash of every baseline file per call, which is a fraction
+    of the yara scan it accompanies.
+    """
+    h = hashlib.sha256()
+    for entry in manifest:
+        h.update(f"{entry['name']}:{entry['sha256']}\n".encode())
+    return h.hexdigest()
 
 
 def baseline_files(settings):
@@ -98,6 +122,7 @@ def baseline_files(settings):
     rule passes a `/usr/bin` gate while matching every uClibc binary in the
     world, malware and `ldconfig` alike.
     """
+    excluded = excludes(settings)
     out = []
     if settings.get("baseline_probes", True) and PROBES.is_dir():
         out.extend(sorted(f for f in PROBES.glob("*") if f.is_file()))
@@ -106,9 +131,34 @@ def baseline_files(settings):
         for f in sorted(Path(d).expanduser().glob("*")):
             if len(out) >= cap:
                 return out
-            if f.is_file() and not f.is_symlink():
+            if f.is_file() and not f.is_symlink() and not excluded(f):
                 out.append(f)
     return out
+
+
+def excludes(settings):
+    """A predicate for files that must not count as known-clean.
+
+    Some perfectly legitimate software carries malicious content on purpose:
+    reverse-engineering tools ship malware signatures and sample strings, and
+    a scanner firing on `die` or `capa` is the rule working, not failing.
+    Leaving them in the corpus would quarantine good rules.
+
+    Patterns are fnmatch, tested against both the bare filename and the full
+    path, so `capa*` and `/opt/die/*` both work.
+    """
+    patterns = [str(x) for x in (settings.get("baseline_exclude") or [])]
+    if not patterns:
+        return lambda f: False
+
+    def excluded(f):
+        name, full = f.name, str(f)
+        return any(
+            fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(full, pat)
+            for pat in patterns
+        )
+
+    return excluded
 
 
 def read_released(paths):
@@ -136,8 +186,13 @@ def read_released(paths):
     return out
 
 
-def scan_baseline(rules, files, log=print):
-    """`{namespace: {"rule": name, "n": hits, "where": [file, ...]}}`.
+def scan_baseline(rules, files, log=print, digests=None):
+    """`{namespace: {"rule": name, "matched": {path: {...}}}}`.
+
+    Every matching file is recorded in full -- name, sha256 and the offsets
+    it matched at -- not a sample of three. A quarantine record whose
+    evidence is "and 297 others" cannot be checked by the person who has to
+    decide whether the rule was right.
 
     Pure observation -- moves nothing, writes nothing. `mirror check` uses this
     against an already-gated mirror, and any external ruleset can be passed in
@@ -145,6 +200,7 @@ def scan_baseline(rules, files, log=print):
     """
     hits = {}
     noise = Counter()
+    digests = dict(digests or {})
     for f in files:
         try:
             matches = rules.match(str(f), timeout=300, console_callback=noise.hit)
@@ -152,11 +208,30 @@ def scan_baseline(rules, files, log=print):
             # A single unreadable or pathological file is not a reason to lose
             # the rest of the run.
             continue
+        if not matches:
+            continue
+        if str(f) not in digests:
+            digests[str(f)] = sha256(f)
         for m in matches:
-            e = hits.setdefault(m.namespace, {"rule": m.rule, "n": 0, "where": []})
-            e["n"] += 1
-            if len(e["where"]) < 3:
-                e["where"].append(f.name)
+            e = hits.setdefault(m.namespace, {"rule": m.rule, "matched": {}})
+            offsets, strings = [], set()
+            for s in m.strings or []:
+                strings.add(s.identifier)
+                for i in s.instances or []:
+                    offsets.append(i.offset)
+            e["matched"][str(f)] = {
+                "file": f.name,
+                "path": str(f),
+                "sha256": digests[str(f)],
+                "strings": sorted(strings),
+                # A pathological rule can match a short string thousands of
+                # times in one binary. The addresses are the point, so they are
+                # kept -- but not without bound, and the truncation is stated
+                # rather than silent.
+                "offsets": [hex(o) for o in sorted(offsets)[:OFFSET_CAP]],
+                "offsets_total": len(offsets),
+                "offsets_truncated": len(offsets) > OFFSET_CAP,
+            }
     log(f"  {len(files)} clean binaries scanned, {len(hits)} rules fired")
     noise.report(log)
     return hits
@@ -181,18 +256,19 @@ def write_quarantine_files(hits, paths, baseline, log=print):
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     for uuid, info in hits.items():
+        matched = [info["matched"][k] for k in sorted(info["matched"])]
         entries[uuid] = {
             "rule": info["rule"],
-            "hits": info["n"],
-            "examples": info["where"],
+            "hits": len(matched),
+            "matched": matched,
             "first_seen": entries.get(uuid, {}).get("first_seen", now),
             "last_checked": now,
             "reason": "baseline_hit",
             # What the verdict was actually about. Both are what make a
             # quarantine revisitable instead of permanent: if either has moved
             # on, the decision no longer describes reality.
-            "rule_sha256": rule_digest(paths["quarantine"] / f"{uuid}.yara"),
-            "baseline_sig": baseline.get("signature", ""),
+            "rule_sha256": sha256(paths["quarantine"] / f"{uuid}.yara"),
+            "baseline_signature": baseline.get("signature", ""),
         }
     # Anything sitting in quarantine/ without a record -- a hand-moved file, or
     # a mirror from before this file existed -- still gets listed, so the JSON
@@ -203,7 +279,7 @@ def write_quarantine_files(hits, paths, baseline, log=print):
             {
                 "rule": "",
                 "hits": 0,
-                "examples": [],
+                "matched": [],
                 "first_seen": now,
                 "reason": "unrecorded",
             },
@@ -221,14 +297,20 @@ def write_quarantine_files(hits, paths, baseline, log=print):
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(doc, indent=2, sort_keys=True))
 
+    # A summary for eyes. The full evidence -- every file, its sha256, the
+    # offsets -- is in quarantine.json; this is the index into it.
+    n_baseline = len(baseline.get("files") or [])
     lines = [
-        f"# quarantined -- fired on {baseline.get('files', 0)} known-clean binaries",
-        "# uuid\trule\thits\tstatus\texamples",
+        f"# quarantined -- fired on {n_baseline} known-clean binaries",
+        f"# baseline {baseline.get('signature', '')[:16]}",
+        "# uuid\trule\thits\tstatus\tfiles",
     ]
     for uuid, e in sorted(entries.items(), key=lambda kv: -kv[1].get("hits", 0)):
+        names = [m["file"] for m in (e.get("matched") or [])]
+        shown = ",".join(names[:5]) + (f",+{len(names) - 5}" if len(names) > 5 else "")
         lines.append(
             f"{uuid}\t{e.get('rule', '')}\t{e.get('hits', 0)} hits"
-            f"\t{e['status']}\t{','.join(e.get('examples') or [])}"
+            f"\t{e['status']}\t{shown}"
         )
     paths["quarantine_log"].write_text("\n".join(lines) + "\n")
     log(f"  quarantine now holds {len(present)} rules")
@@ -240,7 +322,10 @@ def gate(rules, paths, settings, log=print):
     if rules is None:
         return {}
     files = baseline_files(settings)
-    hits = scan_baseline(rules, files, log=log)
+    manifest = baseline_manifest(files)
+    hits = scan_baseline(
+        rules, files, log=log, digests={e["path"]: e["sha256"] for e in manifest}
+    )
 
     for uuid in read_released(paths):
         hits.pop(uuid, None)
@@ -253,17 +338,23 @@ def gate(rules, paths, settings, log=print):
             shutil.move(str(src), str(paths["quarantine"] / f"{uuid}.yara"))
             moved += 1
 
-    write_quarantine_files(hits, paths, describe_baseline(files, settings), log=log)
+    write_quarantine_files(
+        hits, paths, describe_baseline(files, settings, manifest), log=log
+    )
     log(f"  gate: {moved} rules quarantined this run")
     return hits
 
 
-def describe_baseline(files, settings):
+def describe_baseline(files, settings, manifest=None):
+    """The corpus a verdict was measured against, in full."""
+    manifest = baseline_manifest(files) if manifest is None else manifest
     return {
-        "files": len(files),
+        "count": len(manifest),
+        "files": manifest,
         "dirs": list(settings.get("baseline_dirs") or []),
+        "exclude": list(settings.get("baseline_exclude") or []),
         "probes": bool(settings.get("baseline_probes", True)),
-        "signature": baseline_signature(files),
+        "signature": baseline_signature(manifest),
     }
 
 
@@ -291,7 +382,7 @@ def stale(paths, settings):
     except (ValueError, OSError):
         return {}
 
-    sig = baseline_signature(baseline_files(settings))
+    sig = baseline_signature(baseline_manifest(baseline_files(settings)))
     out = {}
     for uuid, e in entries.items():
         f = paths["quarantine"] / f"{uuid}.yara"
@@ -299,9 +390,9 @@ def stale(paths, settings):
             # Cleared by an earlier recheck, or moved by hand. The record is
             # history; only what is in the directory can be stale.
             continue
-        if e.get("rule_sha256") and e["rule_sha256"] != rule_digest(f):
+        if e.get("rule_sha256") and e["rule_sha256"] != sha256(f):
             out[uuid] = "rule_changed"
-        elif e.get("baseline_sig") and e["baseline_sig"] != sig:
+        elif e.get("baseline_signature") and e["baseline_signature"] != sig:
             out[uuid] = "baseline_changed"
         elif not e.get("rule_sha256"):
             # Quarantined before hashes were recorded, so there is nothing to

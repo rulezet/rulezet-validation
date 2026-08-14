@@ -64,7 +64,7 @@ def test_quarantine_json_and_txt_describe_the_same_rules(tmp_path):
     doc = json.loads(p["quarantine_json"].read_text())
     assert doc["quarantined"]["noisy-uuid"]["rule"] == "noisy"
     assert doc["quarantined"]["noisy-uuid"]["reason"] == "baseline_hit"
-    assert doc["baseline"]["files"] == 1
+    assert doc["baseline"]["count"] == 1
     txt = p["quarantine_log"].read_text()
     assert "noisy-uuid\tnoisy" in txt
 
@@ -247,3 +247,93 @@ def test_the_old_in_mirror_location_is_still_honoured(tmp_path):
     p["released_legacy"].write_text("noisy-uuid\n")
     assert gate.gate(_compiled(p), p, s, log=lambda *_: None) == {}
     assert (p["rules"] / "noisy-uuid.yara").exists()
+
+
+# --- evidence ---------------------------------------------------------------
+
+
+def test_the_record_names_every_file_not_a_sample(tmp_path):
+    """"and 297 others" is not something a reviewer can check."""
+    s, p = _setup(tmp_path)
+    for i in range(6):
+        (tmp_path / "clean" / f"more{i}.bin").write_bytes(b"\x7fELF filler\n")
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+
+    e = json.loads(p["quarantine_json"].read_text())["quarantined"]["noisy-uuid"]
+    assert e["hits"] == 7
+    assert len(e["matched"]) == 7
+    assert {m["file"] for m in e["matched"]} == {"benign.bin"} | {
+        f"more{i}.bin" for i in range(6)
+    }
+
+
+def test_every_match_carries_a_sha256_and_offsets(tmp_path):
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    m = json.loads(p["quarantine_json"].read_text())["quarantined"]["noisy-uuid"][
+        "matched"
+    ][0]
+    assert len(m["sha256"]) == 64
+    assert m["offsets"] == ["0x1"]  # "ELF" at offset 1, after the 0x7f
+    assert m["strings"] == ["$a"]
+
+
+def test_hashes_are_full_length(tmp_path):
+    """A field called sha256 holding 16 characters is a lie."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    doc = json.loads(p["quarantine_json"].read_text())
+    assert len(doc["quarantined"]["noisy-uuid"]["rule_sha256"]) == 64
+    assert len(doc["baseline"]["signature"]) == 64
+    assert all(len(f["sha256"]) == 64 for f in doc["baseline"]["files"])
+
+
+def test_the_baseline_is_recorded_file_by_file(tmp_path):
+    """"fired on 300 clean binaries" is not a reproducible claim."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    baseline = json.loads(p["quarantine_json"].read_text())["baseline"]
+    assert baseline["count"] == 1
+    assert baseline["files"][0]["name"] == "benign.bin"
+    assert baseline["files"][0]["size"] == 22
+
+
+def test_editing_a_baseline_file_in_place_is_now_detected(tmp_path):
+    """The old name+size signature could not see this."""
+    s, p = _setup(tmp_path)
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    assert gate.stale(p, s) == {}
+    same_length = (tmp_path / "clean" / "benign.bin").read_bytes().replace(b"a", b"b")
+    (tmp_path / "clean" / "benign.bin").write_bytes(same_length)
+    assert gate.stale(p, s) == {"noisy-uuid": "baseline_changed"}
+
+
+# --- exclusions -------------------------------------------------------------
+
+
+def test_re_tools_can_be_kept_out_of_the_clean_corpus(tmp_path):
+    """DIE and capa ship malware signatures on purpose. A rule firing on them
+    is working, not failing, and leaving them in would quarantine good rules."""
+    s, p = _setup(tmp_path, baseline_exclude=["capa*", "die"])
+    (tmp_path / "clean" / "capa").write_bytes(b"\x7fELF signature database\n")
+    (tmp_path / "clean" / "die").write_bytes(b"\x7fELF detect it easy\n")
+
+    names = {f.name for f in gate.baseline_files(s)}
+    assert "capa" not in names and "die" not in names
+    assert "benign.bin" in names
+
+
+def test_exclusions_match_full_paths_too(tmp_path):
+    s, p = _setup(tmp_path, baseline_exclude=[str(tmp_path / "clean" / "tools") + "/*"])
+    tools = tmp_path / "clean" / "tools"
+    tools.mkdir()
+    (tools / "capa").write_bytes(b"\x7fELF\n")
+    assert all("tools" not in str(f) for f in gate.baseline_files(s))
+
+
+def test_the_exclusion_list_is_recorded_with_the_verdict(tmp_path):
+    """A verdict reached by ignoring half the corpus must say so."""
+    s, p = _setup(tmp_path, baseline_exclude=["capa*"])
+    gate.gate(_compiled(p), p, s, log=lambda *_: None)
+    baseline = json.loads(p["quarantine_json"].read_text())["baseline"]
+    assert baseline["exclude"] == ["capa*"]
