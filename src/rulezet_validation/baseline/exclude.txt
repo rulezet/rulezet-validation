@@ -1,0 +1,73 @@
+# Files that must not count as known-clean.
+#
+# These are not malware and not false positives. They are legitimate programs
+# that carry malicious content on purpose -- signature databases, shellcode
+# generators, packer stubs. A rule firing on them is the rule *working*, and
+# leaving them in the baseline would quarantine good rules.
+#
+# This list ships with the tool because the reasoning is universal: capa embeds
+# its own rule set no matter whose machine it is on. Local additions go in
+# `baseline_exclude` in your config and are additive. Set
+# `baseline_exclude_defaults = false` to ignore this file entirely.
+#
+# fnmatch patterns, tested against both the bare filename and the full path.
+# Every exclusion is logged and recorded in the verdict -- nothing here is
+# silent.
+#
+# Adding an entry: give the reason. "It matched a rule" is not one; that is
+# what the tool is for. The bar is "this file contains attack content or
+# detection signatures as part of doing its job".
+
+# --- Detection engines and their signature databases ------------------------
+capa*           # embeds its own capability rule set
+die             # Detect It Easy: packer/compiler signature database
+diec            # ditto, console build
+yara            # ships example and test rules
+yarac
+clamscan        # ClamAV signature database
+clamd
+freshclam
+sigtool
+pev             # PE analysis toolkit with malware heuristics
+readpe
+
+# --- Exploit and payload frameworks -----------------------------------------
+msfvenom        # generates shellcode; contains encoders and payload stubs
+msfconsole
+msfd
+msfdb
+msfrpc
+msfrpcd
+msfupdate
+msfbinscan      # opcode/gadget scanners carrying exploit patterns
+msfelfscan
+msfmachscan
+msfpescan
+msfrop
+searchsploit    # exploit-db index
+
+# --- Packers ----------------------------------------------------------------
+upx             # contains the UPX stub that packer-detection rules target
+
+# --- Reverse-engineering frameworks with embedded signature tables ----------
+radare2
+r2
+rabin2          # carries magic/signature tables
+rafind2
+rasm2
+binwalk         # firmware magic signature database
+floss           # FLARE string extraction, ships malware heuristics
+
+# --- Deliberately NOT excluded ----------------------------------------------
+#
+# binutils -- objdump, nm, ld, readelf, strings, ar, as, strip.
+#
+# These match plenty of rules, but for the opposite reason: they list every
+# architecture they support (".arm", "_MIPS", ".ppc"), and a rule that treats
+# an architecture table as a malware indicator is *wrong*. Excluding binutils
+# would have hidden ELF_Mirai firing on 21 of 65 clean uClibc binaries via a
+# `4 of ($arch*)` glob that unintentionally spanned 18 strings. That finding is
+# the kind this tool exists to produce.
+#
+# The test is not "does it match" but "does it carry attack content on purpose".
+# binutils does not. capa does.

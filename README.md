@@ -132,15 +132,41 @@ Reverse-engineering tools — DIE, capa, yara itself — ship malware signatures
 sample strings, so a rule firing on them is the rule *working*. Leaving them in
 the baseline quarantines good rules.
 
-`baseline_exclude` takes fnmatch patterns, tested against both the bare filename
-and the full path:
+Exclusions come from two layers:
 
-```toml
-baseline_exclude = ["capa*", "die", "/opt/ghidra/*"]
-```
+- **Shipped** — `baseline/exclude.txt` in the package. Versioned, commented with
+  a reason per entry, and open to pull requests. It is shipped rather than left
+  to each user because the reasoning is universal: capa embeds its own rule set
+  on everyone's machine, so every user would otherwise rediscover it by having
+  a good rule quarantined.
+- **Local** — `baseline_exclude` in your config, additive:
 
-The list is recorded in every verdict, because a decision reached by ignoring
-part of the corpus has to say so.
+  ```toml
+  baseline_exclude = ["/opt/ghidra/*", "our-internal-scanner"]
+  baseline_exclude_defaults = true    # false ignores the shipped list
+  ```
+
+Patterns are fnmatch, tested against both the bare filename and the full path.
+Every exclusion is logged and both the patterns and the excluded filenames are
+recorded in the verdict — shipping defaults must not make them invisible.
+
+The bar for adding to the shipped list is "this file carries attack content or
+detection signatures as part of doing its job", not "it matched a rule". binutils
+matches plenty of rules and is deliberately **not** excluded: a rule that reads
+an architecture table as a malware indicator is wrong, and excluding `objdump`
+would have hidden `ELF_Mirai` firing on 21 of 65 clean uClibc binaries.
+
+### How the corpus is sampled
+
+`baseline_max_files` caps the scan, and the files are taken at an even stride
+across the sorted directory rather than as a prefix. A prefix of `/usr/bin` is
+everything from `[` to `cmp` — 300 files sharing a first letter are not a sample
+of 3300, and a rule firing only on `zsh` would pass. The stride is deterministic,
+so verdicts stay reproducible, and the exact file list is recorded regardless.
+
+Symlinks are skipped rather than followed: `/usr/bin` is full of them
+(`msfvenom`, `upx`, `r2` all point into `/etc/alternatives`), and following them
+scans the same binary twice under two names.
 
 ## The evidence a verdict carries
 

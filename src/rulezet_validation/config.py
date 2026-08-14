@@ -42,6 +42,9 @@ DEFAULTS = {
     # firing on `die` or `capa` is working, not failing, and leaving them in
     # the corpus would quarantine good rules.
     "baseline_exclude": [],
+    # Use the shipped baseline/exclude.txt as well. Off means this machine
+    # trusts nothing but its own list.
+    "baseline_exclude_defaults": True,
     # Include the bundled uClibc probes in the baseline. Turning this off
     # re-opens the static-embedded-libc blind spot; see README.
     "baseline_probes": True,

@@ -31,7 +31,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-rulezet_validation = ["baseline/probes/*", "baseline/manifest.toml"]
+rulezet_validation = ["baseline/probes/*", "baseline/manifest.toml", "baseline/exclude.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

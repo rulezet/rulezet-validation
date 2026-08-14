@@ -41,6 +41,10 @@ PROBES = Path(__file__).resolve().parent / "baseline" / "probes"
 # pathological rule write a megabyte into quarantine.json.
 OFFSET_CAP = 64
 
+# Shipped, versioned, PR-able. See the file for why this is not left to each
+# user's local config.
+DEFAULT_EXCLUDE = Path(__file__).resolve().parent / "baseline" / "exclude.txt"
+
 
 class Counter:
     """Swallows output from YARA's `console` module, counting it.
@@ -122,18 +126,82 @@ def baseline_files(settings):
     rule passes a `/usr/bin` gate while matching every uClibc binary in the
     world, malware and `ldconfig` alike.
     """
-    excluded = excludes(settings)
-    out = []
+    return collect_baseline(settings)[0]
+
+
+def collect_baseline(settings):
+    """`(kept, excluded)`.
+
+    The cap counts kept files only. Excluding `capa` should not cost you a slot
+    in the corpus -- otherwise turning on an exclusion silently shrinks what
+    gets scanned.
+    """
+    excluded_by = excludes(settings)
+    out, dropped = [], []
     if settings.get("baseline_probes", True) and PROBES.is_dir():
         out.extend(sorted(f for f in PROBES.glob("*") if f.is_file()))
-    cap = int(settings.get("baseline_max_files") or 300)
+
+    candidates = []
     for d in settings.get("baseline_dirs") or []:
         for f in sorted(Path(d).expanduser().glob("*")):
-            if len(out) >= cap:
-                return out
-            if f.is_file() and not f.is_symlink() and not excluded(f):
-                out.append(f)
+            # Symlinks are skipped rather than followed: /usr/bin is full of
+            # them (msfvenom, upx, r2 all point at /etc/alternatives), and
+            # following them scans the same binary twice under two names.
+            if not f.is_file() or f.is_symlink():
+                continue
+            (dropped if excluded_by(f) else candidates).append(f)
+
+    cap = int(settings.get("baseline_max_files") or 300)
+    out.extend(sample(candidates, cap))
+    return out, dropped
+
+
+def sample(files, cap):
+    """`cap` files spread across the whole list, not its first `cap` entries.
+
+    Taking a prefix of a sorted directory means a `/usr/bin` baseline is
+    everything from `[` to `cmp` and nothing else -- 300 files that share a
+    first letter are not a sample of 3300, and a rule firing only on `zsh`
+    passes the gate. An even stride is still fully deterministic, so a verdict
+    stays reproducible, and the exact file list is recorded anyway.
+    """
+    if cap <= 0 or len(files) <= cap:
+        return list(files)
+    stride = len(files) / cap
+    return [files[int(i * stride)] for i in range(cap)]
+
+
+def default_excludes():
+    """Patterns from the shipped `exclude.txt`, comments and blanks stripped.
+
+    Entries may carry a trailing `# reason` comment, which is the point of the
+    file -- an exclusion without a justification is indistinguishable from
+    hiding a false positive.
+    """
+    if not DEFAULT_EXCLUDE.exists():
+        return []
+    out = []
+    for line in DEFAULT_EXCLUDE.read_text().splitlines():
+        pattern = line.split("#", 1)[0].strip()
+        if pattern:
+            out.append(pattern)
     return out
+
+
+def exclude_patterns(settings):
+    """Shipped defaults plus this machine's additions, in that order."""
+    use_defaults = settings.get("baseline_exclude_defaults", True)
+    out = default_excludes() if use_defaults else []
+    return out + [str(x) for x in (settings.get("baseline_exclude") or [])]
+
+
+def partition(settings, files):
+    """`(kept, excluded)` -- what counts as clean, and what was set aside."""
+    excluded_by = excludes(settings)
+    kept, dropped = [], []
+    for f in files:
+        (dropped if excluded_by(f) else kept).append(f)
+    return kept, dropped
 
 
 def excludes(settings):
@@ -145,9 +213,13 @@ def excludes(settings):
     Leaving them in the corpus would quarantine good rules.
 
     Patterns are fnmatch, tested against both the bare filename and the full
-    path, so `capa*` and `/opt/die/*` both work.
+    path, so `capa*` and `/opt/die/*` both work. They come from two places: the
+    shipped `baseline/exclude.txt`, because "capa embeds its own rules" is true
+    on every machine, and `baseline_exclude` in the local config for anything
+    site-specific. Every exclusion is logged and recorded in the verdict, so
+    shipping defaults does not make them invisible.
     """
-    patterns = [str(x) for x in (settings.get("baseline_exclude") or [])]
+    patterns = exclude_patterns(settings)
     if not patterns:
         return lambda f: False
 
@@ -321,7 +393,9 @@ def gate(rules, paths, settings, log=print):
     """Scan the baseline, move every rule that fired, record the decision."""
     if rules is None:
         return {}
-    files = baseline_files(settings)
+    files, excluded = collect_baseline(settings)
+    if excluded:
+        log(f"  {len(excluded)} files excluded from the baseline")
     manifest = baseline_manifest(files)
     hits = scan_baseline(
         rules, files, log=log, digests={e["path"]: e["sha256"] for e in manifest}
@@ -339,20 +413,25 @@ def gate(rules, paths, settings, log=print):
             moved += 1
 
     write_quarantine_files(
-        hits, paths, describe_baseline(files, settings, manifest), log=log
+        hits, paths, describe_baseline(files, settings, manifest, excluded), log=log
     )
     log(f"  gate: {moved} rules quarantined this run")
     return hits
 
 
-def describe_baseline(files, settings, manifest=None):
-    """The corpus a verdict was measured against, in full."""
+def describe_baseline(files, settings, manifest=None, excluded=None):
+    """The corpus a verdict was measured against, in full.
+
+    Including what was left out. A verdict reached by ignoring part of the
+    corpus has to say which part, or "fired on no clean binaries" means nothing.
+    """
     manifest = baseline_manifest(files) if manifest is None else manifest
     return {
         "count": len(manifest),
         "files": manifest,
         "dirs": list(settings.get("baseline_dirs") or []),
-        "exclude": list(settings.get("baseline_exclude") or []),
+        "exclude_patterns": exclude_patterns(settings),
+        "excluded_files": sorted(f.name for f in (excluded or [])),
         "probes": bool(settings.get("baseline_probes", True)),
         "signature": baseline_signature(manifest),
     }
