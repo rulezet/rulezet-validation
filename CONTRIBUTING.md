@@ -30,7 +30,12 @@ src/rulezet_validation/
   sync.py       orchestration
   cli.py        argparse wiring only, no logic
   baseline/     manifest + the bundled probes
+rust/            all Rust crates and Rust implementation
 ```
+
+Rust source and Cargo manifests belong under the top-level `rust/` directory.
+The repository layout test enforces this boundary so Rust tooling does not become
+interspersed with the Python package.
 
 ## Things that will get a patch rejected
 
