@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+target/
 .pytest_cache/
 .ruff_cache/
 rulezet-validation.toml
