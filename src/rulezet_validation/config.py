@@ -19,9 +19,8 @@ Precedence, strongest first: environment, `.env`, config file, defaults.
 """
 
 import os
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 DEFAULT_URL = "https://rulezet.org"
 
