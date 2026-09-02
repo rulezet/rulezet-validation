@@ -3,7 +3,7 @@ name = "rulezet-validation"
 version = "0.1.0"
 description = "Mirror rulezet.org's YARA rules and validate them against known-clean binaries"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "rdmmf" }]
 keywords = ["yara", "rulezet", "false-positive", "malware", "detection-engineering"]
