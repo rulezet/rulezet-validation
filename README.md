@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/rulezet-validation.svg" width="360" alt="Rulezet Validation">
+</p>
+
 # rulezet-validation
 
 Mirror [rulezet.org](https://rulezet.org)'s YARA rules and scan them against
