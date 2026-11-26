@@ -31,6 +31,7 @@ One dependency: `yara-python`. No database, no services. State is files.
 | `mirror compile` | recompile the mirror |
 | `mirror status` | key, counts, last sync, stale verdicts |
 | `scan BINARY` | what fires on one file |
+| `check RULE.yar\|DIR ...` | scan your own rules against the baseline. No mirror, no key. Bare `rulezet-validate my.yar` works too. Exit 1 if any rule fires or fails to compile |
 | `baseline list` | files the gate will scan |
 | `baseline sync` | download and verify the pinned clean-binary corpus |
 
@@ -43,6 +44,13 @@ One dependency: `yara-python`. No database, no services. State is files.
 | `--all` | `mirror recheck` | re-evaluate every quarantined rule, not only stale ones |
 | `--mirror-dir` | any | override the mirror location |
 | `--config` | any | path to a config TOML |
+
+Test a local rule without syncing rulezet:
+
+```bash
+rulezet-validate baseline sync
+rulezet-validate check my_rule.yar rules_dir/
+```
 
 ## Configuration
 

@@ -13,12 +13,15 @@ module. Logic lives in `source`, `mirror`, `gate`, `sync`.
     rulezet-validate baseline list
     rulezet-validate baseline sync
 
-`check RULE.yar`, the single-rule linter that needs no mirror at all, lands
-next; the bare-path form (`rulezet-validate my_rule.yar`) is reserved for it.
+    rulezet-validate check RULE.yar [DIR ...]  # local rules vs the baseline
+    rulezet-validate my_rule.yar               # same as `check`
+
+`check` needs no mirror and no API key: `baseline sync`, then point it at rules.
 """
 
 import argparse
 import sys
+from pathlib import Path
 
 from . import __version__, config
 from . import mirror as mirror_mod
@@ -161,6 +164,67 @@ def cmd_scan(args):
     return 0
 
 
+RULE_SUFFIXES = (".yar", ".yara")
+
+
+def local_rule_files(targets):
+    """Files named on the command line, plus *.yar/*.yara under any directory."""
+    out = []
+    for t in map(Path, targets):
+        if t.is_dir():
+            out += sorted(f for f in t.rglob("*") if f.suffix in RULE_SUFFIXES)
+        elif t.is_file():
+            out.append(t)
+        else:
+            raise OSError(f"no such rule file or directory: {t}")
+    return out
+
+
+def cmd_check(args):
+    """Compile local rules and scan the baseline. Exit 1 if any rule fires."""
+    import yara
+
+    settings, _ = _resolved(args)
+    # The cap keeps a 130k-rule gate run bounded; a handful of local rules
+    # scans the whole corpus in seconds.
+    settings["baseline_max_files"] = sys.maxsize
+    rule_files = local_rule_files(args.rules)
+    if not rule_files:
+        print("no .yar/.yara files found", file=sys.stderr)
+        return 2
+    good, broken = {}, 0
+    for f in rule_files:
+        try:
+            yara.compile(filepath=str(f))
+        except yara.Error as e:
+            print(f"BROKEN\t{f}\t{e}")
+            broken += 1
+            continue
+        # The path is the namespace: two files may both define `rule test`.
+        good[str(f)] = str(f)
+    if not good:
+        return 2
+    files = baseline_files(settings)
+    if not files:
+        print(
+            "baseline is empty; run `rulezet-validate baseline sync`", file=sys.stderr
+        )
+        return 2
+    hits = scan_baseline(
+        yara.compile(filepaths=good), files,
+        log=lambda s: print(s, file=sys.stderr),
+    )
+    for ns in good:
+        e = hits.get(ns)
+        if not e:
+            print(f"CLEAN\t{ns}")
+            continue
+        print(f"FIRES\t{ns}\t{len(e['matched'])} files")
+        for m in e["matched"].values():
+            print(f"  {m['path']}\t{','.join(m['offsets'][:8])}")
+    return 1 if hits or broken else 0
+
+
 def cmd_baseline_list(args):
     settings, _ = _resolved(args)
     files = baseline_files(settings)
@@ -240,6 +304,10 @@ def build_parser():
     sc.add_argument("binary")
     sc.set_defaults(func=cmd_scan)
 
+    ck = sub.add_parser("check", help="scan local rules against the baseline")
+    ck.add_argument("rules", nargs="+", help="rule files or directories")
+    ck.set_defaults(func=cmd_check)
+
     b = sub.add_parser("baseline", help="the known-clean corpus")
     bsub = b.add_subparsers(dest="baseline_cmd", required=True)
     bl = bsub.add_parser("list", help="files the gate will scan")
@@ -259,6 +327,19 @@ def build_parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # Bare-path form: `rulezet-validate [--config X] my_rule.yar` means `check`.
+    takes_value = ("--config", "--mirror-dir")
+    first = next(
+        (
+            i
+            for i, a in enumerate(argv)
+            if not a.startswith("-") and (i == 0 or argv[i - 1] not in takes_value)
+        ),
+        None,
+    )
+    if first is not None and Path(argv[first]).suffix in RULE_SUFFIXES:
+        argv.insert(first, "check")
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
