@@ -32,6 +32,7 @@ One dependency: `yara-python`. No database, no services. State is files.
 | `mirror status` | key, counts, last sync, stale verdicts |
 | `scan BINARY` | what fires on one file |
 | `baseline list` | files the gate will scan |
+| `baseline sync` | download and verify the pinned clean-binary corpus |
 
 | flag | on | does |
 |---|---|---|
@@ -53,7 +54,7 @@ Precedence, strongest first: environment, `.env`, config file, defaults.
 ```toml
 mirror_dir = "data/rulezet"
 released_file = "released.txt"
-baseline_dirs = ["/usr/bin"]
+baseline_dirs = ["data/baseline"]
 baseline_max_files = 300
 baseline_probes = true
 baseline_exclude = []
@@ -83,11 +84,60 @@ directory; `mirror status` reports whether it reached the process.
 ## The baseline
 
 What counts as known-clean: the bundled uClibc ARM probes, plus
-`baseline_dirs`, minus the exclusions.
+`baseline_dirs`, minus the exclusions. The default directory contains pinned
+Ubuntu ELF and Windows PE samples after a one-time sync; it no longer
+depends on this machine's `/usr/bin`.
+
+```sh
+rulezet-validate baseline sync
+rulezet-validate baseline list
+```
+
+The source URLs, licenses, package and file SHA-256 hashes are in
+`src/rulezet_validation/baseline/manifest.toml` and
+`src/rulezet_validation/baseline/curated.json`. Sync downloads to gitignored
+`data/baseline/default/`; it verifies both the download and the scanned file before
+using it. The Ubuntu and MSYS2 package extraction needs `dpkg-deb` and `zstd`.
+The default gate
+requires a sync first; use `baseline list` to see the exact files.
+
+The curated lock contains 2,000 files: 1,600 amd64 ELF binaries from Ubuntu
+24.04 `main`, and 400 amd64 PE binaries from MSYS2 MinGW packages whose SPDX
+license is MIT, BSD, Apache, ISC, 0BSD, Zlib, BSL, or CC0. The process picks
+packages in SHA-256 order of package name, takes at most ten executable files
+from each package in SHA-256 order of member path, and rejects packages above
+5 MB or files above 3 MB. It records the official index hashes, package URLs,
+package hashes, member paths, and file hashes. Ubuntu `main` is a redistributable
+archive component; the index does not provide individual SPDX tags, so each
+Ubuntu package's copyright file remains the authoritative license record.
+Ubuntu `main` includes copyleft packages; the default is a free-software
+selection, not a permissive-only selection.
+MSYS2 maintains package license metadata on a best-effort basis; check package
+notices before redistributing binaries.
+No downloaded package or binary is committed. To regenerate a selection with a
+different size and update the lock:
+
+```sh
+PYTHONPATH=src python3 -m rulezet_validation.baseline_curate --count 2000
+```
+
+Regeneration uses the current upstream indexes, so it can change the selection.
+The committed lock makes ordinary `baseline sync` reproducible.
+
+To add your own clean files, copy a directory into `data/baseline/`, for example
+`data/baseline/my_custom_dir/`. The gate scans nested files automatically.
+Only put files there that you want treated as known-clean. The existing
+`baseline_max_files` cap still applies across all added directories.
+
+`baseline sync --all-licenses` additionally downloads the opt-in GPL sample to
+`data/baseline-all-licenses/` and prints a license warning. That directory is
+not in the default gate. Add it to `baseline_dirs` locally to scan it. The
+independent `--skip-hash-verification` flag bypasses checks with a warning; it
+does not change license selection.
 
 | behaviour | |
 |---|---|
-| sampling | even stride across the sorted directory, so a cap of 300 on `/usr/bin` is not just `[` to `cmp` |
+| sampling | even stride across the sorted directory if files exceed `baseline_max_files` (default 2100) |
 | symlinks | skipped, not followed |
 | exclusions | do not consume a slot in `baseline_max_files` |
 | probes | always included, never displaced by the cap |
@@ -248,7 +298,7 @@ overwriting or being overwritten.
 Next:
 
 1. `rulezet-validate check RULE.yar` — single-rule linter, no mirror needed.
-2. `baseline sync` — fetch the corpora declared in `baseline/manifest.toml`.
+2. Expand the pinned baseline with more architectures and packages.
 3. Static checks feeding the risk proposal, so a rule can be judged on more
    than its hit count.
 

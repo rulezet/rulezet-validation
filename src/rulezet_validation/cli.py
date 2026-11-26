@@ -11,6 +11,7 @@ module. Logic lives in `source`, `mirror`, `gate`, `sync`.
     rulezet-validate mirror recheck         # put quarantined rules back on trial
     rulezet-validate scan BINARY            # what fires on one file
     rulezet-validate baseline list
+    rulezet-validate baseline sync
 
 `check RULE.yar`, the single-rule linter that needs no mirror at all, lands
 next; the bare-path form (`rulezet-validate my_rule.yar`) is reserved for it.
@@ -21,6 +22,7 @@ import sys
 
 from . import __version__, config
 from . import mirror as mirror_mod
+from .baseline_sync import sync as sync_baseline
 from .gate import (
     Counter,
     baseline_files,
@@ -168,6 +170,14 @@ def cmd_baseline_list(args):
     return 0
 
 
+def cmd_baseline_sync(args):
+    sync_baseline(
+        all_licenses=args.all_licenses,
+        skip_hash_verification=args.skip_hash_verification,
+    )
+    return 0
+
+
 def _add_sync(sub, name, help_text):
     """`sync` exists twice: under `mirror`, and at the top level.
 
@@ -234,6 +244,16 @@ def build_parser():
     bsub = b.add_subparsers(dest="baseline_cmd", required=True)
     bl = bsub.add_parser("list", help="files the gate will scan")
     bl.set_defaults(func=cmd_baseline_list)
+    bs = bsub.add_parser("sync", help="download the pinned clean-binary corpus")
+    bs.add_argument(
+        "--all-licenses", action="store_true",
+        help="also fetch opt-in artifacts into data/baseline-all-licenses",
+    )
+    bs.add_argument(
+        "--skip-hash-verification", action="store_true",
+        help="accept downloads without checking pinned SHA-256 hashes (unsafe)",
+    )
+    bs.set_defaults(func=cmd_baseline_sync)
 
     return p
 
@@ -242,7 +262,7 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         # Configuration problems -- a rejected key, allow_licenses without one.
         # The user can act on the sentence; the traceback only hides it.
         print(f"error: {e}", file=sys.stderr)

@@ -1,9 +1,7 @@
 # The known-clean corpus.
 #
-# Two mechanisms. Small probes are committed to `probes/` so a fresh install
-# has a working baseline offline. Everything larger is declared here and
-# fetched on demand by `rulezet-validate baseline sync`, because the repo has
-# no business carrying tens of megabytes of other people's binaries.
+# Small probes are committed to `probes/`. The selected larger files below are
+# fetched on demand by `rulezet-validate baseline sync`; binaries stay out of Git.
 #
 # A baseline artifact must be provably benign and independently verifiable.
 # "I built it myself" is not enough -- the URL and hash are what let a reviewer
@@ -59,9 +57,49 @@ ld.lld -o clean_uclibc_printf.elf --static -e _start --defsym=main=printf \
   $R/usr/lib/crtn.o
 """
 
-# Fetched, not committed. `baseline sync` unpacks these and adds every ELF to
-# the corpus. Not yet implemented -- the entries are the specification.
+# Historical ARM rootfs candidate; not part of the pinned sync selection.
 [fetch.uclibc_armv4l_rootfs]
 url = "https://uclibc.org/downloads/binaries/0.9.30.1/mini-native-armv4l.tar.bz2"
 sha256 = "e58eb493d0e545c709640b28adfbc0044cfe2d8eb0e0fe6369c99fa107b167f6"
 description = "65 clean ARM uClibc binaries: busybox, binutils, gcc, ldconfig."
+
+# Pinned local corpus. `default = false` files are fetched only with
+# `baseline sync --all-licenses` and never enter the default gate directory.
+# Hashes describe both the upstream download and the exact scanned file.
+[[files]]
+name = "dash_0.5.12-6ubuntu5_amd64.deb"
+url = "https://archive.ubuntu.com/ubuntu/pool/main/d/dash/dash_0.5.12-6ubuntu5_amd64.deb"
+sha256 = "e97728d8deaa51300255f0572bbd68b9549e0894a184c056dc420fc4e0ba0781"
+member = "usr/bin/dash"
+file_sha256 = "86d31f6fb799e91fa21bad341484564510ca287703a16e9e46c53338776f4f42"
+output = "ubuntu-noble-amd64-dash.elf"
+license = "BSD-3-Clause (see package usr/share/doc/dash/copyright)"
+default = true
+
+[[files]]
+name = "jq-windows-amd64.exe"
+url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-windows-amd64.exe"
+sha256 = "7451fbbf37feffb9bf262bd97c54f0da558c63f0748e64152dd87b0a07b6d6ab"
+file_sha256 = "7451fbbf37feffb9bf262bd97c54f0da558c63f0748e64152dd87b0a07b6d6ab"
+output = "jq-1.7.1-windows-amd64.exe"
+license = "MIT and bundled component notices (https://github.com/jqlang/jq/blob/jq-1.7.1/COPYING)"
+default = true
+
+[[files]]
+name = "jq-linux-armel"
+url = "https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-armel"
+sha256 = "d6b86023e0848c93a618a74b6fd741ce62f5d557fd3c2c1d7870663713b2c174"
+file_sha256 = "d6b86023e0848c93a618a74b6fd741ce62f5d557fd3c2c1d7870663713b2c174"
+output = "jq-1.7.1-linux-armel.elf"
+license = "MIT and bundled component notices (https://github.com/jqlang/jq/blob/jq-1.7.1/COPYING)"
+default = true
+
+[[files]]
+name = "coreutils_9.4-3ubuntu6.3_amd64.deb"
+url = "https://archive.ubuntu.com/ubuntu/pool/main/c/coreutils/coreutils_9.4-3ubuntu6.3_amd64.deb"
+sha256 = "e1e9a17892be0cc83b7cea747edf331ffeb6d6c010b4db296e60d888e8e9274c"
+member = "usr/bin/ls"
+file_sha256 = "2726eb35864608ff34969fbf45ef4afcbba95eefed5ce5653c9c0124c4cd26cf"
+output = "ubuntu-noble-amd64-ls.elf"
+license = "GPL-3+ and other notices (see package usr/share/doc/coreutils/copyright)"
+default = false

@@ -37,9 +37,9 @@ DEFAULTS = {
     "allow_licenses": [],
     # Directories of known-clean binaries the gate scans. The bundled probes
     # are always added on top of whatever is listed here.
-    "baseline_dirs": ["/usr/bin"],
+    "baseline_dirs": ["data/baseline"],
     # Cap on baseline files, so a gate run stays minutes rather than hours.
-    "baseline_max_files": 300,
+    "baseline_max_files": 2100,
     # fnmatch patterns for files that must not count as known-clean, tested
     # against both the bare filename and the full path. Reverse-engineering
     # tools ship malware signatures and sample strings on purpose -- a rule
