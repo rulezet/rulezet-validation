@@ -206,6 +206,10 @@ def collect_baseline(settings):
     in the corpus -- otherwise turning on an exclusion silently shrinks what
     gets scanned.
     """
+    if settings.get("baseline_dirs") == ["data/baseline"] and not Path(
+        "data/baseline/default"
+    ).is_dir():
+        raise ValueError("baseline missing; run `rulezet-validate baseline sync` first")
     excluded_by = excludes(settings)
     out, dropped = [], []
     if settings.get("baseline_probes", True) and PROBES.is_dir():
@@ -213,7 +217,7 @@ def collect_baseline(settings):
 
     candidates = []
     for d in settings.get("baseline_dirs") or []:
-        for f in sorted(Path(d).expanduser().glob("*")):
+        for f in sorted(Path(d).expanduser().rglob("*")):
             # Symlinks are skipped rather than followed: /usr/bin is full of
             # them (msfvenom, upx, r2 all point at /etc/alternatives), and
             # following them scans the same binary twice under two names.

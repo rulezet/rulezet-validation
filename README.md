@@ -35,7 +35,9 @@ One dependency: `yara-python`. No database, no services. State is files.
 | `mirror compile` | recompile the mirror |
 | `mirror status` | key, counts, last sync, stale verdicts |
 | `scan BINARY` | what fires on one file |
+| `check RULE.yar\|DIR ...` | scan your own rules against the baseline. No mirror, no key. Bare `rulezet-validate my.yar` works too. Exit 1 if any rule fires or fails to compile |
 | `baseline list` | files the gate will scan |
+| `baseline sync` | download and verify the pinned clean-binary corpus |
 
 | flag | on | does |
 |---|---|---|
@@ -47,6 +49,13 @@ One dependency: `yara-python`. No database, no services. State is files.
 | `--mirror-dir` | any | override the mirror location |
 | `--config` | any | path to a config TOML |
 
+Test a local rule without syncing rulezet:
+
+```bash
+rulezet-validate baseline sync
+rulezet-validate check my_rule.yar rules_dir/
+```
+
 ## Configuration
 
 Optional. First hit wins: `$RULEZET_CONFIG`, `./rulezet-validation.toml`,
@@ -57,7 +66,7 @@ Precedence, strongest first: environment, `.env`, config file, defaults.
 ```toml
 mirror_dir = "data/rulezet"
 released_file = "released.txt"
-baseline_dirs = ["/usr/bin"]
+baseline_dirs = ["data/baseline"]
 baseline_max_files = 300
 baseline_probes = true
 baseline_exclude = []
@@ -87,11 +96,84 @@ directory; `mirror status` reports whether it reached the process.
 ## The baseline
 
 What counts as known-clean: the bundled uClibc ARM probes, plus
-`baseline_dirs`, minus the exclusions.
+`baseline_dirs`, minus the exclusions. After a one-time sync the default
+directory holds about 10,200 pinned ELF and PE files across x86, x86-64, ARM,
+AArch64, MIPS, PowerPC, s390x and RISC-V; it does not depend on this machine's
+`/usr/bin`. A first sync downloads about 6 GB and needs about 13 GB free,
+because the downloaded packages stay in `data/` caches for later syncs.
+
+```sh
+rulezet-validate baseline sync
+rulezet-validate baseline list
+```
+
+The source URLs, licenses, package and file SHA-256 hashes are in
+`src/rulezet_validation/baseline/manifest.toml` and
+`src/rulezet_validation/baseline/curated.json`. Sync downloads to gitignored
+`data/baseline/default/`; it verifies both the download and the scanned file before
+using it. Extraction needs `dpkg-deb`, `zstd` and `xz` on the PATH.
+The default gate
+requires a sync first; use `baseline list` to see the exact files.
+
+The curated lock contains 2,000 files: 1,600 amd64 ELF binaries from Ubuntu
+24.04 `main`, and 400 amd64 PE binaries from MSYS2 MinGW packages whose SPDX
+license is MIT, BSD, Apache, ISC, 0BSD, Zlib, BSL, or CC0. The process picks
+packages in SHA-256 order of package name, takes at most ten executable files
+from each package in SHA-256 order of member path, and rejects packages above
+5 MB or files above 3 MB. It records the official index hashes, package URLs,
+package hashes, member paths, and file hashes. Ubuntu `main` is a redistributable
+archive component; the index does not provide individual SPDX tags, so each
+Ubuntu package's copyright file remains the authoritative license record.
+Ubuntu `main` includes copyleft packages; the default is a free-software
+selection, not a permissive-only selection.
+MSYS2 maintains package license metadata on a best-effort basis; check package
+notices before redistributing binaries.
+No downloaded package or binary is committed. To regenerate a selection with a
+different size and update the lock:
+
+```sh
+PYTHONPATH=src python3 -m rulezet_validation.baseline_curate --count 2000
+```
+
+Three more locks bring the default corpus to about 10,200 files:
+
+| lock | files | what |
+|---|---|---|
+| `baseline/ports.json` | 3,000 | Debian `main` ELF for arm64, armhf, armel, mipsel, mips64el, ppc64el, s390x, i386 (bookworm) and riscv64 (trixie), equal share each, from a fixed snapshot.debian.org timestamp |
+| `baseline/openwrt.json` | 1,000 | OpenWrt 23.05.5 `base` and `packages` feeds for eight 32-bit ARM CPU targets (ARMv5 to Cortex-A15). ARM encoding and musl libc, closer to embedded malware builds than Debian armhf (Thumb-2) |
+| `baseline/assemblage.json` | 4,200 | [Assemblage](https://assemblage-dataset.net/): 2,500 MSVC Windows PE, 1,500 gcc/clang C/C++ Linux ELF, 200 Rust Linux ELF (llvm, gcc, cranelift). Permissive licenses only, at most 3 files per repository |
+
+Sync downloads each ports package from `deb.debian.org` first and falls back
+to the pinned snapshot.debian.org URL only when the live mirror has dropped
+the file; the pinned SHA-256 is checked either way.
+
+Assemblage is x86 and x86-64 only, so architecture coverage comes from the
+Debian ports and OpenWrt. See `docs/assemblage-subset.md` for how the Assemblage subset is
+read from its multi-GB archives.
+
+```sh
+PYTHONPATH=src python3 -m rulezet_validation.baseline_curate --ports --count 3000
+PYTHONPATH=src python3 -m rulezet_validation.baseline_curate --openwrt --count 1000
+PYTHONPATH=src python3 -m rulezet_validation.baseline_assemblage --pe 2500 --elf 1500 --rust 200
+```
+
+Regeneration uses the current upstream indexes, so it can change the selection.
+The committed lock makes ordinary `baseline sync` reproducible.
+
+To add your own clean files, copy a directory into `data/baseline/`, for example
+`data/baseline/my_custom_dir/`. The gate scans nested files automatically.
+Only put files there that you want treated as known-clean. The existing
+`baseline_max_files` cap still applies across all added directories.
+
+`baseline sync --all-licenses` additionally downloads the opt-in GPL sample to
+`data/baseline-all-licenses/` and prints a license warning. That directory is
+not in the default gate. Add it to `baseline_dirs` locally to scan it. The
+independent `--skip-hash-verification` flag bypasses checks with a warning; it
+does not change license selection.
 
 | behaviour | |
 |---|---|
-| sampling | even stride across the sorted directory, so a cap of 300 on `/usr/bin` is not just `[` to `cmp` |
+| sampling | even stride across the sorted directory if files exceed `baseline_max_files` (default 2100; `check` scans every file) |
 | symlinks | skipped, not followed |
 | exclusions | do not consume a slot in `baseline_max_files` |
 | probes | always included, never displaced by the cap |
@@ -150,13 +232,18 @@ is not in `released.txt`. Nothing else moves a file.
 ```json
 {
   "baseline": {
-    "count": 302,
+    "count": 2102,
     "signature": "742ff72ca0128ad4cfbe700e300b1cc55dd7bc17f82944d966ca41b37e34377b",
-    "dirs": ["/usr/bin"],
+    "dirs": ["data/baseline"],
     "exclude_patterns": ["capa*", "die"],
-    "excluded_files": ["capa", "die", "diec"],
+    "excluded_files": [],
     "files": [
-      {"name": "zsh", "path": "/usr/bin/zsh", "sha256": "…", "size": 968936}
+      {
+        "name": "9a9c61e49958-bzip2",
+        "path": "data/baseline/default/openwrt/openwrt-arm_cortex-a9-base/bzip2/9a9c61e49958-bzip2",
+        "sha256": "…",
+        "size": 28707
+      }
     ]
   },
   "quarantined": {
@@ -252,7 +339,7 @@ overwriting or being overwritten.
 Next:
 
 1. `rulezet-validate check RULE.yar` — single-rule linter, no mirror needed.
-2. `baseline sync` — fetch the corpora declared in `baseline/manifest.toml`.
+2. Expand the pinned baseline with more architectures and packages.
 3. Static checks feeding the risk proposal, so a rule can be judged on more
    than its hit count.
 
