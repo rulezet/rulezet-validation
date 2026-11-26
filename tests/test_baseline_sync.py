@@ -61,6 +61,7 @@ default = false
 
 
 def test_hash_mismatch_fails_closed_unless_explicitly_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(baseline_sync, "RETRY_DELAY", 0)
     manifest = tmp_path / "manifest.toml"
     manifest.write_text("""[[files]]
 name = "file"

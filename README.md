@@ -92,9 +92,11 @@ directory; `mirror status` reports whether it reached the process.
 ## The baseline
 
 What counts as known-clean: the bundled uClibc ARM probes, plus
-`baseline_dirs`, minus the exclusions. The default directory contains pinned
-Ubuntu ELF and Windows PE samples after a one-time sync; it no longer
-depends on this machine's `/usr/bin`.
+`baseline_dirs`, minus the exclusions. After a one-time sync the default
+directory holds about 10,200 pinned ELF and PE files across x86, x86-64, ARM,
+AArch64, MIPS, PowerPC, s390x and RISC-V; it does not depend on this machine's
+`/usr/bin`. A first sync downloads about 6 GB and needs about 13 GB free,
+because the downloaded packages stay in `data/` caches for later syncs.
 
 ```sh
 rulezet-validate baseline sync
@@ -105,7 +107,7 @@ The source URLs, licenses, package and file SHA-256 hashes are in
 `src/rulezet_validation/baseline/manifest.toml` and
 `src/rulezet_validation/baseline/curated.json`. Sync downloads to gitignored
 `data/baseline/default/`; it verifies both the download and the scanned file before
-using it. The Ubuntu and MSYS2 package extraction needs `dpkg-deb` and `zstd`.
+using it. Extraction needs `dpkg-deb`, `zstd` and `xz` on the PATH.
 The default gate
 requires a sync first; use `baseline list` to see the exact files.
 
@@ -129,6 +131,28 @@ different size and update the lock:
 PYTHONPATH=src python3 -m rulezet_validation.baseline_curate --count 2000
 ```
 
+Three more locks bring the default corpus to about 10,200 files:
+
+| lock | files | what |
+|---|---|---|
+| `baseline/ports.json` | 3,000 | Debian `main` ELF for arm64, armhf, armel, mipsel, mips64el, ppc64el, s390x, i386 (bookworm) and riscv64 (trixie), equal share each, from a fixed snapshot.debian.org timestamp |
+| `baseline/openwrt.json` | 1,000 | OpenWrt 23.05.5 `base` and `packages` feeds for eight 32-bit ARM CPU targets (ARMv5 to Cortex-A15). ARM encoding and musl libc, closer to embedded malware builds than Debian armhf (Thumb-2) |
+| `baseline/assemblage.json` | 4,200 | [Assemblage](https://assemblage-dataset.net/): 2,500 MSVC Windows PE, 1,500 gcc/clang C/C++ Linux ELF, 200 Rust Linux ELF (llvm, gcc, cranelift). Permissive licenses only, at most 3 files per repository |
+
+Sync downloads each ports package from `deb.debian.org` first and falls back
+to the pinned snapshot.debian.org URL only when the live mirror has dropped
+the file; the pinned SHA-256 is checked either way.
+
+Assemblage is x86 and x86-64 only, so architecture coverage comes from the
+Debian ports and OpenWrt. See `docs/assemblage-subset.md` for how the Assemblage subset is
+read from its multi-GB archives.
+
+```sh
+PYTHONPATH=src python3 -m rulezet_validation.baseline_curate --ports --count 3000
+PYTHONPATH=src python3 -m rulezet_validation.baseline_curate --openwrt --count 1000
+PYTHONPATH=src python3 -m rulezet_validation.baseline_assemblage --pe 2500 --elf 1500 --rust 200
+```
+
 Regeneration uses the current upstream indexes, so it can change the selection.
 The committed lock makes ordinary `baseline sync` reproducible.
 
@@ -145,7 +169,7 @@ does not change license selection.
 
 | behaviour | |
 |---|---|
-| sampling | even stride across the sorted directory if files exceed `baseline_max_files` (default 2100) |
+| sampling | even stride across the sorted directory if files exceed `baseline_max_files` (default 2100; `check` scans every file) |
 | symlinks | skipped, not followed |
 | exclusions | do not consume a slot in `baseline_max_files` |
 | probes | always included, never displaced by the cap |
@@ -204,13 +228,18 @@ is not in `released.txt`. Nothing else moves a file.
 ```json
 {
   "baseline": {
-    "count": 302,
+    "count": 2102,
     "signature": "742ff72ca0128ad4cfbe700e300b1cc55dd7bc17f82944d966ca41b37e34377b",
-    "dirs": ["/usr/bin"],
+    "dirs": ["data/baseline"],
     "exclude_patterns": ["capa*", "die"],
-    "excluded_files": ["capa", "die", "diec"],
+    "excluded_files": [],
     "files": [
-      {"name": "zsh", "path": "/usr/bin/zsh", "sha256": "…", "size": 968936}
+      {
+        "name": "9a9c61e49958-bzip2",
+        "path": "data/baseline/default/openwrt/openwrt-arm_cortex-a9-base/bzip2/9a9c61e49958-bzip2",
+        "sha256": "…",
+        "size": 28707
+      }
     ]
   },
   "quarantined": {

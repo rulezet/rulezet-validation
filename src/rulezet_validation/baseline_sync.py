@@ -1,11 +1,13 @@
 """Fetch the pinned, locally scanned baseline artifacts."""
 
 import hashlib
+import http.client
 import io
 import os
 import subprocess
 import tarfile
 import tempfile
+import time
 import tomllib
 import urllib.request
 from pathlib import Path
@@ -13,6 +15,7 @@ from pathlib import Path
 MANIFEST = Path(__file__).resolve().parent / "baseline" / "manifest.toml"
 ROOT = Path("data/baseline")
 MAX_DOWNLOAD = 100 * 1024 * 1024
+RETRY_DELAY = 5  # seconds, multiplied by the attempt number
 
 
 def _digest(path):
@@ -23,7 +26,20 @@ def _digest(path):
     return h.hexdigest()
 
 
-def _download(entry, cache, verify):
+def _download(entry, cache, verify, attempts=3):
+    """Fetch into the cache. Retries mismatches and network errors: mirrors such
+    as snapshot.debian.org intermittently serve throttled or truncated bodies."""
+    for attempt in range(attempts):
+        try:
+            return _download_once(entry, cache, verify)
+        except (ValueError, OSError, http.client.HTTPException) as e:
+            retryable = not isinstance(e, ValueError) or "SHA-256 mismatch" in str(e)
+            if not retryable or attempt == attempts - 1:
+                raise
+            time.sleep(RETRY_DELAY * (attempt + 1))
+
+
+def _download_once(entry, cache, verify):
     url = entry["url"]
     if not url.startswith("https://"):
         raise ValueError(f"baseline source must use HTTPS: {url}")
@@ -129,6 +145,17 @@ def sync(
         os.replace(temp, destination)
         log(f"{destination}  {entry['license']}")
     if Path(manifest) == MANIFEST and Path(root) == ROOT:
-        from .baseline_curate import sync_locked
+        from .baseline_assemblage import sync_locked as sync_assemblage
+        from .baseline_curate import (
+            OPENWRT_LOCK,
+            OPENWRT_ROOT,
+            PORTS_LOCK,
+            PORTS_ROOT,
+            sync_locked,
+        )
 
-        sync_locked(verify=not skip_hash_verification, log=log)
+        verify = not skip_hash_verification
+        sync_locked(verify=verify, log=log)
+        sync_locked(PORTS_LOCK, PORTS_ROOT, verify=verify, log=log)
+        sync_locked(OPENWRT_LOCK, OPENWRT_ROOT, verify=verify, log=log)
+        sync_assemblage(verify=verify, log=log)
